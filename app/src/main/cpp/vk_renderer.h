@@ -20,6 +20,10 @@ class VkRenderer {
     void detachWindow();
     bool drawFrame();
 
+    // Replace the SDF atlas texture and rebuild the test geometry to a single
+    // glyph-sized quad centered on the screen. Used for Phase 2b development.
+    bool setGlyphSdf(const uint8_t* sdfPixels, int w, int h);
+
     bool valid() const { return device_ != VK_NULL_HANDLE && swapchain_ != VK_NULL_HANDLE; }
 
    private:

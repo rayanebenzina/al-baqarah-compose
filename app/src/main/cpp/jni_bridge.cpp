@@ -3,6 +3,9 @@
 #include <android/native_window_jni.h>
 #include <jni.h>
 
+#include <vector>
+
+#include "sdf_gen.h"
 #include "vk_renderer.h"
 
 #define LOG_TAG "BaqarahVkJNI"
@@ -49,4 +52,25 @@ Java_com_example_baqarah_vk_NativeRenderer_nDrawFrame(JNIEnv*, jobject, jlong ha
     auto* r = asRenderer(handle);
     if (!r) return JNI_FALSE;
     return r->drawFrame() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_baqarah_vk_NativeRenderer_nUploadGlyphAlpha(
+    JNIEnv* env, jobject, jlong handle, jbyteArray alpha, jint w, jint h, jint spread) {
+    auto* r = asRenderer(handle);
+    if (!r || !alpha || w <= 0 || h <= 0 || spread <= 0) return JNI_FALSE;
+
+    const jsize len = env->GetArrayLength(alpha);
+    if (len != w * h) {
+        LOGI("nUploadGlyphAlpha: size mismatch %d vs %dx%d=%d", (int)len, w, h, w * h);
+        return JNI_FALSE;
+    }
+
+    std::vector<uint8_t> alphaBuf((size_t)len);
+    env->GetByteArrayRegion(alpha, 0, len, reinterpret_cast<jbyte*>(alphaBuf.data()));
+
+    std::vector<uint8_t> sdfBuf((size_t)len);
+    baqarah::computeSdf(alphaBuf.data(), w, h, spread, /*threshold=*/128, sdfBuf.data());
+
+    return r->setGlyphSdf(sdfBuf.data(), w, h) ? JNI_TRUE : JNI_FALSE;
 }

@@ -21,6 +21,9 @@ class VulkanCanvasView @JvmOverloads constructor(
     private val running = AtomicBoolean(false)
     private lateinit var renderHandler: android.os.Handler
 
+    private data class PendingGlyph(val alpha: ByteArray, val w: Int, val h: Int, val spread: Int)
+    private var pendingGlyph: PendingGlyph? = null
+
     init {
         renderThread.start()
         renderHandler = android.os.Handler(renderThread.looper)
@@ -33,8 +36,25 @@ class VulkanCanvasView @JvmOverloads constructor(
             val ok = renderer.attachSurface(surface)
             Log.i(TAG, "attachSurface ok=$ok")
             surfaceReady.set(ok)
-            if (ok && !running.getAndSet(true)) {
-                post { Choreographer.getInstance().postFrameCallback(this) }
+            if (ok) {
+                pendingGlyph?.let { g ->
+                    val uploaded = renderer.uploadGlyphAlpha(g.alpha, g.w, g.h, g.spread)
+                    Log.i(TAG, "uploadGlyphAlpha (pending) ok=$uploaded")
+                }
+                if (!running.getAndSet(true)) {
+                    post { Choreographer.getInstance().postFrameCallback(this) }
+                }
+            }
+        }
+    }
+
+    fun setTestGlyph(alpha: ByteArray, w: Int, h: Int, spread: Int) {
+        val g = PendingGlyph(alpha, w, h, spread)
+        pendingGlyph = g
+        renderHandler.post {
+            if (surfaceReady.get()) {
+                val ok = renderer.uploadGlyphAlpha(g.alpha, g.w, g.h, g.spread)
+                Log.i(TAG, "uploadGlyphAlpha ok=$ok")
             }
         }
     }

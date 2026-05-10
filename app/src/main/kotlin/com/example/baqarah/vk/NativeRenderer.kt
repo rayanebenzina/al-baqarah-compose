@@ -17,6 +17,9 @@ class NativeRenderer {
 
     fun drawFrame(): Boolean = nDrawFrame(handle)
 
+    fun uploadGlyphAlpha(pixels: ByteArray, w: Int, h: Int, spread: Int): Boolean =
+        nUploadGlyphAlpha(handle, pixels, w, h, spread)
+
     fun release() {
         if (handle != 0L) {
             nDestroy(handle)
@@ -29,4 +32,5 @@ class NativeRenderer {
     private external fun nAttachSurface(handle: Long, surface: Surface): Boolean
     private external fun nDetachSurface(handle: Long)
     private external fun nDrawFrame(handle: Long): Boolean
+    private external fun nUploadGlyphAlpha(handle: Long, pixels: ByteArray, w: Int, h: Int, spread: Int): Boolean
 }

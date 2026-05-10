@@ -38,6 +38,7 @@ add_shader(frag textured.frag kTexturedFragSpv)
 
 add_library(baqarah_vk SHARED
     vk_renderer.cpp
+    sdf_gen.cpp
     jni_bridge.cpp
     ${SHADER_HEADERS}
 )
