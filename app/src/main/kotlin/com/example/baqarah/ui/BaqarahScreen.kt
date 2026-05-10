@@ -69,6 +69,8 @@ fun BaqarahScreen(
                 typefaces = s.typefaces,
                 atlas = s.atlas,
                 fontSizePx = s.fontSizePx,
+                prebuiltPlans = s.prebuiltPlans,
+                prebuiltWidthPx = s.prebuiltWidthPx,
             )
         }
     }
@@ -80,6 +82,8 @@ private fun VerseList(
     typefaces: Map<Int, Typeface>,
     atlas: GlyphAtlas,
     fontSizePx: Float,
+    prebuiltPlans: Map<Int, LayoutPlan>,
+    prebuiltWidthPx: Int,
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -105,9 +109,10 @@ private fun VerseList(
                 if (USE_V5) {
                     V5AyahText(
                         verse = verse,
-                        typefaces = typefaces,
                         atlas = atlas,
                         fontSizePx = fontSizePx,
+                        prebuiltPlans = prebuiltPlans,
+                        prebuiltWidthPx = prebuiltWidthPx,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 8.dp),

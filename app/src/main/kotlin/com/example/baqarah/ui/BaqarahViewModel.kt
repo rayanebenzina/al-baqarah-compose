@@ -1,6 +1,8 @@
 package com.example.baqarah.ui
 
+import android.app.Application
 import android.graphics.Typeface
+import android.util.DisplayMetrics
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.viewModelScope
@@ -25,11 +27,14 @@ sealed interface BaqarahUiState {
         val typefaces: Map<Int, Typeface>,
         val atlas: GlyphAtlas,
         val fontSizePx: Float,
+        val prebuiltPlans: Map<Int, LayoutPlan>,
+        val prebuiltWidthPx: Int,
     ) : BaqarahUiState
     data class Error(val message: String) : BaqarahUiState
 }
 
 class BaqarahViewModel(
+    private val app: Application,
     private val quran: QuranRepository,
     private val fonts: FontRepository,
 ) : ViewModel() {
@@ -51,7 +56,8 @@ class BaqarahViewModel(
                 val pages = verses.flatMap { v -> v.words.map { it.pageNumber } }.toSet()
                 val typefaces = pages.associateWith { fonts.typefaceForPage(it) }
                 val atlas = buildAtlas(verses, typefaces, targetFontSizePx)
-                BaqarahUiState.Ready(verses, typefaces, atlas, targetFontSizePx)
+                val (plans, widthPx) = buildPrebuiltPlans(verses, atlas, targetFontSizePx)
+                BaqarahUiState.Ready(verses, typefaces, atlas, targetFontSizePx, plans, widthPx)
             }.fold(
                 onSuccess = { _state.value = it },
                 onFailure = { _state.value = BaqarahUiState.Error(it.message ?: "Unknown error") },
@@ -81,11 +87,33 @@ class BaqarahViewModel(
         atlas
     }
 
+    private suspend fun buildPrebuiltPlans(
+        verses: List<Verse>,
+        atlas: GlyphAtlas,
+        fontSizePx: Float,
+    ): Pair<Map<Int, LayoutPlan>, Int> = withContext(Dispatchers.Default) {
+        val widthPx = estimateAyahWidthPx()
+        val plans = HashMap<Int, LayoutPlan>(verses.size)
+        for (v in verses) {
+            plans[v.id] = buildPlan(v, atlas, widthPx.toFloat(), fontSizePx)
+        }
+        plans to widthPx
+    }
+
+    private fun estimateAyahWidthPx(): Int {
+        val dm: DisplayMetrics = app.resources.displayMetrics
+        val scrollbarDp = 22f
+        val startPaddingDp = 8f
+        val endPaddingDp = 20f
+        val totalPaddingPx = (scrollbarDp + startPaddingDp + endPaddingDp) * dm.density
+        return (dm.widthPixels - totalPaddingPx).toInt().coerceAtLeast(0)
+    }
+
     companion object {
         val Factory = viewModelFactory {
             initializer {
                 val app = this[APPLICATION_KEY] as BaqarahApp
-                BaqarahViewModel(app.quranRepository, app.fontRepository)
+                BaqarahViewModel(app, app.quranRepository, app.fontRepository)
             }
         }
     }
