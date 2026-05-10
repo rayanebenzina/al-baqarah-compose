@@ -4,10 +4,10 @@ import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Typeface
-import androidx.compose.ui.graphics.asImageBitmap
 import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.util.Log
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.viewModelScope
@@ -33,8 +33,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-sealed interface BaqarahUiState {
-    data object Loading : BaqarahUiState
+sealed interface SurahUiState {
+    data object Loading : SurahUiState
     data class Ready(
         val verseIds: List<Int>,
         val verses: List<Verse>,
@@ -43,11 +43,12 @@ sealed interface BaqarahUiState {
         val fontSizePx: Float,
         val prebuiltPlans: Map<Int, LayoutPlan>,
         val prebuiltWidthPx: Int,
-    ) : BaqarahUiState
-    data class Error(val message: String) : BaqarahUiState
+    ) : SurahUiState
+    data class Error(val message: String) : SurahUiState
 }
 
-class BaqarahViewModel(
+class SurahViewModel(
+    private val surahNumber: Int,
     private val app: Application,
     private val quran: QuranRepository,
     private val fonts: FontRepository,
@@ -55,12 +56,13 @@ class BaqarahViewModel(
     private val settings: SettingsRepository,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow<BaqarahUiState>(BaqarahUiState.Loading)
-    val state: StateFlow<BaqarahUiState> = _state.asStateFlow()
+    private val _state = MutableStateFlow<SurahUiState>(SurahUiState.Loading)
+    val state: StateFlow<SurahUiState> = _state.asStateFlow()
 
     val fontSize: StateFlow<Int> = settings.fontSizePx
 
     private var loadJob: Job? = null
+    private var lastLoadedFontSize: Int = -1
 
     init { reload() }
 
@@ -72,25 +74,26 @@ class BaqarahViewModel(
 
     fun reload() {
         loadJob?.cancel()
-        _state.value = BaqarahUiState.Loading
+        _state.value = SurahUiState.Loading
         val targetFontSize = settings.fontSizePx.value
+        lastLoadedFontSize = targetFontSize
         val started = SystemClock.elapsedRealtime()
         loadJob = viewModelScope.launch {
             runCatching { buildOrLoad(targetFontSize) }.fold(
                 onSuccess = {
                     _state.value = it
-                    Log.i("BaqarahPerf", "ready_ms=${SystemClock.elapsedRealtime() - started} fontSize=$targetFontSize")
+                    Log.i("BaqarahPerf", "ready_ms=${SystemClock.elapsedRealtime() - started} surah=$surahNumber fontSize=$targetFontSize")
                 },
-                onFailure = { _state.value = BaqarahUiState.Error(it.message ?: "Unknown error") },
+                onFailure = { _state.value = SurahUiState.Error(it.message ?: "Unknown error") },
             )
         }
     }
 
-    private suspend fun buildOrLoad(targetFontSizePx: Int): BaqarahUiState.Ready = coroutineScope {
+    private suspend fun buildOrLoad(targetFontSizePx: Int): SurahUiState.Ready = coroutineScope {
         val widthPx = estimateAyahWidthPx()
-        val atlasDir = cache.atlasDir(targetFontSizePx)
+        val atlasDir = cache.atlasDir(surahNumber, targetFontSizePx)
 
-        val plansJob = async(Dispatchers.IO) { cache.loadPlans(targetFontSizePx, widthPx) }
+        val plansJob = async(Dispatchers.IO) { cache.loadPlans(surahNumber, targetFontSizePx, widthPx) }
         val pngFilesJob = async(Dispatchers.IO) { GlyphAtlas.readPngFiles(atlasDir) }
         val page0Job = async(Dispatchers.IO) {
             val f = java.io.File(atlasDir, "atlas_0.png")
@@ -105,12 +108,12 @@ class BaqarahViewModel(
         val pngFiles = pngFilesJob.await()
         val page0Image = page0Job.await()
 
-        // Cache hit if we have plans + page files. Verses only needed for rebuild.
         val cacheHit = cachedPlans != null && pngFiles != null
         val verses: List<Verse> = if (cacheHit) {
             emptyList()
         } else {
-            cache.loadVerses() ?: quran.alBaqarah().also { cache.saveVerses(it) }
+            cache.loadVerses(surahNumber)
+                ?: quran.versesByChapter(surahNumber).also { cache.saveVerses(surahNumber, it) }
         }
 
         val (atlas, typefaces) = if (cacheHit) {
@@ -131,10 +134,10 @@ class BaqarahViewModel(
 
         val plans = cachedPlans ?: withContext(Dispatchers.Default) {
             verses.associate { it.id to buildPlan(it, atlas, widthPx.toFloat(), targetFontSizePx.toFloat()) }
-        }.also { cache.savePlans(targetFontSizePx, widthPx, it) }
+        }.also { cache.savePlans(surahNumber, targetFontSizePx, widthPx, it) }
 
         val verseIds = plans.keys.sorted()
-        BaqarahUiState.Ready(verseIds, verses, typefaces, atlas, targetFontSizePx.toFloat(), plans, widthPx)
+        SurahUiState.Ready(verseIds, verses, typefaces, atlas, targetFontSizePx.toFloat(), plans, widthPx)
     }
 
     private fun computePriorityPages(plans: Map<Int, LayoutPlan>, ayahLimit: Int): IntArray {
@@ -180,10 +183,11 @@ class BaqarahViewModel(
     }
 
     companion object {
-        val Factory = viewModelFactory {
+        fun factory(surahNumber: Int) = viewModelFactory {
             initializer {
                 val app = this[APPLICATION_KEY] as BaqarahApp
-                BaqarahViewModel(
+                SurahViewModel(
+                    surahNumber = surahNumber,
                     app = app,
                     quran = app.quranRepository,
                     fonts = app.fontRepository,

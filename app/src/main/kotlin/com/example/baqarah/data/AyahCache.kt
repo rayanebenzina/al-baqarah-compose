@@ -13,31 +13,34 @@ import java.io.File
 class AyahCache(context: Context) {
 
     private val baseDir = File(context.filesDir, "ayah_cache").apply { mkdirs() }
-    private val versesFile = File(baseDir, "verses.json")
 
     private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
     private val verseListType = Types.newParameterizedType(List::class.java, Verse::class.java)
     private val verseListAdapter = moshi.adapter<List<Verse>>(verseListType)
 
-    fun atlasDir(fontSize: Int): File =
-        File(baseDir, "fs_$fontSize/atlas").apply { mkdirs() }
+    private fun surahDir(surah: Int): File = File(baseDir, "surah_$surah").apply { mkdirs() }
+    private fun versesFile(surah: Int): File = File(surahDir(surah), "verses.json")
 
-    private fun plansFile(fontSize: Int, widthPx: Int): File =
-        File(baseDir, "fs_$fontSize/plans_w$widthPx.bin")
+    fun atlasDir(surah: Int, fontSize: Int): File =
+        File(surahDir(surah), "fs_$fontSize/atlas").apply { mkdirs() }
 
-    fun saveVerses(verses: List<Verse>) {
-        versesFile.outputStream().use { it.write(verseListAdapter.toJson(verses).toByteArray()) }
+    private fun plansFile(surah: Int, fontSize: Int, widthPx: Int): File =
+        File(surahDir(surah), "fs_$fontSize/plans_w$widthPx.bin")
+
+    fun saveVerses(surah: Int, verses: List<Verse>) {
+        versesFile(surah).outputStream().use { it.write(verseListAdapter.toJson(verses).toByteArray()) }
     }
 
-    fun loadVerses(): List<Verse>? {
-        if (!versesFile.exists()) return null
+    fun loadVerses(surah: Int): List<Verse>? {
+        val f = versesFile(surah)
+        if (!f.exists()) return null
         return runCatching {
-            versesFile.inputStream().use { verseListAdapter.fromJson(it.bufferedReader().readText()) }
+            f.inputStream().use { verseListAdapter.fromJson(it.bufferedReader().readText()) }
         }.getOrNull()
     }
 
-    fun savePlans(fontSize: Int, widthPx: Int, plans: Map<Int, LayoutPlan>) {
-        val file = plansFile(fontSize, widthPx)
+    fun savePlans(surah: Int, fontSize: Int, widthPx: Int, plans: Map<Int, LayoutPlan>) {
+        val file = plansFile(surah, fontSize, widthPx)
         file.parentFile?.mkdirs()
         DataOutputStream(BufferedOutputStream(file.outputStream())).use { out ->
             out.writeInt(PLANS_VERSION)
@@ -52,8 +55,8 @@ class AyahCache(context: Context) {
         }
     }
 
-    fun loadPlans(fontSize: Int, widthPx: Int): Map<Int, LayoutPlan>? {
-        val file = plansFile(fontSize, widthPx)
+    fun loadPlans(surah: Int, fontSize: Int, widthPx: Int): Map<Int, LayoutPlan>? {
+        val file = plansFile(surah, fontSize, widthPx)
         if (!file.exists()) return null
         return runCatching {
             val raw = file.readBytes()

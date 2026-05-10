@@ -1,5 +1,6 @@
 package com.example.baqarah.data
 
 class QuranRepository(private val api: QuranApi = QuranApi.create()) {
-    suspend fun alBaqarah(): List<Verse> = api.versesByChapter(chapter = 2).verses
+    suspend fun versesByChapter(chapter: Int): List<Verse> =
+        api.versesByChapter(chapter = chapter, perPage = 300).verses
 }

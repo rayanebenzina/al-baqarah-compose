@@ -21,6 +21,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
@@ -43,13 +45,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.baqarah.R
 import com.example.baqarah.data.GlyphAtlas
 import com.example.baqarah.data.LayoutPlan
+import com.example.baqarah.data.SURAHS
+import com.example.baqarah.data.Surah
 import com.example.baqarah.data.Verse
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -58,18 +62,30 @@ private const val USE_V5 = true
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BaqarahScreen(
-    viewModel: BaqarahViewModel = viewModel(factory = BaqarahViewModel.Factory),
-) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
-    val fontSize by viewModel.fontSize.collectAsStateWithLifecycle()
+fun QuranScreen() {
+    val pagerState = rememberPagerState(initialPage = 1, pageCount = { SURAHS.size })
+    val currentSurah = SURAHS[pagerState.currentPage]
     var showSettings by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text(stringResource(R.string.title)) },
+                title = {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = currentSurah.nameArabic,
+                            fontSize = 18.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = "${currentSurah.id}. ${currentSurah.nameSimple} • ${currentSurah.versesCount} ayat",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                },
                 actions = {
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Outlined.Settings, contentDescription = "Settings")
@@ -78,41 +94,82 @@ fun BaqarahScreen(
             )
         },
     ) { padding ->
-        Box(
+        HorizontalPager(
+            state = pagerState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .background(MaterialTheme.colorScheme.background),
-            contentAlignment = Alignment.Center,
-        ) {
-            when (val s = state) {
-                is BaqarahUiState.Loading -> CircularProgressIndicator()
-                is BaqarahUiState.Error -> Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Text(s.message, color = MaterialTheme.colorScheme.error)
-                    Button(onClick = { viewModel.reload() }) { Text("Retry") }
-                }
-                is BaqarahUiState.Ready -> VerseList(
-                    verseIds = s.verseIds,
-                    verses = s.verses,
-                    typefaces = s.typefaces,
-                    atlas = s.atlas,
-                    fontSizePx = s.fontSizePx,
-                    prebuiltPlans = s.prebuiltPlans,
-                    prebuiltWidthPx = s.prebuiltWidthPx,
-                )
-            }
+            beyondViewportPageCount = 1,
+            key = { SURAHS[it].id },
+        ) { page ->
+            SurahPage(surah = SURAHS[page])
         }
     }
 
     if (showSettings) {
-        SettingsSheet(
-            currentFontSize = fontSize,
-            onFontSizeChange = { viewModel.setFontSize(it) },
+        SurahSettingsBridge(
+            surahNumber = currentSurah.id,
             onDismiss = { showSettings = false },
         )
+    }
+}
+
+@Composable
+private fun SurahSettingsBridge(surahNumber: Int, onDismiss: () -> Unit) {
+    val vm: SurahViewModel = viewModel(
+        key = "surah_$surahNumber",
+        factory = SurahViewModel.factory(surahNumber),
+    )
+    val fontSize by vm.fontSize.collectAsStateWithLifecycle()
+    SettingsSheet(
+        currentFontSize = fontSize,
+        onFontSizeChange = { vm.setFontSize(it) },
+        onDismiss = onDismiss,
+    )
+}
+
+@Composable
+private fun SurahPage(surah: Surah) {
+    val vm: SurahViewModel = viewModel(
+        key = "surah_${surah.id}",
+        factory = SurahViewModel.factory(surah.id),
+    )
+    val state by vm.state.collectAsStateWithLifecycle()
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        when (val s = state) {
+            is SurahUiState.Loading -> Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                CircularProgressIndicator()
+                Text(
+                    surah.nameSimple,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+                    fontSize = 12.sp,
+                )
+            }
+            is SurahUiState.Error -> Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(s.message, color = MaterialTheme.colorScheme.error)
+                Button(onClick = { vm.reload() }) { Text("Retry") }
+            }
+            is SurahUiState.Ready -> VerseList(
+                verseIds = s.verseIds,
+                verses = s.verses,
+                typefaces = s.typefaces,
+                atlas = s.atlas,
+                fontSizePx = s.fontSizePx,
+                prebuiltPlans = s.prebuiltPlans,
+                prebuiltWidthPx = s.prebuiltWidthPx,
+            )
+        }
     }
 }
 
