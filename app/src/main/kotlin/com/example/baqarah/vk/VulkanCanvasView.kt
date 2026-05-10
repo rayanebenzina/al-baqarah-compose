@@ -23,11 +23,17 @@ class VulkanCanvasView @JvmOverloads constructor(
     private val running = AtomicBoolean(false)
     private lateinit var renderHandler: android.os.Handler
 
-    private data class PendingColr(
-        val ttfBytes: ByteArray, val codepoint: Int,
-        val dstX: Float, val dstY: Float, val dstW: Float, val dstH: Float,
-    )
-    private var pending: PendingColr? = null
+    private sealed interface Pending {
+        data class Single(
+            val ttfBytes: ByteArray, val codepoint: Int,
+            val dstX: Float, val dstY: Float, val dstW: Float, val dstH: Float,
+        ) : Pending
+        data class Line(
+            val ttfBytes: ByteArray, val codepoints: IntArray,
+            val cursorX: Float, val baselineY: Float, val fontSizePx: Float,
+        ) : Pending
+    }
+    private var pending: Pending? = null
 
     private var scrollY = 0f
     private var maxScrollY = 0f
@@ -94,7 +100,15 @@ class VulkanCanvasView @JvmOverloads constructor(
         ttfBytes: ByteArray, codepoint: Int,
         dstX: Float, dstY: Float, dstW: Float, dstH: Float,
     ) {
-        pending = PendingColr(ttfBytes, codepoint, dstX, dstY, dstW, dstH)
+        pending = Pending.Single(ttfBytes, codepoint, dstX, dstY, dstW, dstH)
+        renderHandler.post { if (surfaceReady.get()) applyPending() }
+    }
+
+    fun setColrLine(
+        ttfBytes: ByteArray, codepoints: IntArray,
+        cursorX: Float, baselineY: Float, fontSizePx: Float,
+    ) {
+        pending = Pending.Line(ttfBytes, codepoints, cursorX, baselineY, fontSizePx)
         renderHandler.post { if (surfaceReady.get()) applyPending() }
     }
 
@@ -159,9 +173,17 @@ class VulkanCanvasView @JvmOverloads constructor(
     }
 
     private fun applyPending() {
-        val p = pending ?: return
-        val ok = renderer.uploadColrFromTtf(p.ttfBytes, p.codepoint, p.dstX, p.dstY, p.dstW, p.dstH)
-        Log.i(TAG, "uploadColrFromTtf ok=$ok cp=U+${p.codepoint.toString(16)}")
+        when (val p = pending) {
+            is Pending.Single -> {
+                val ok = renderer.uploadColrFromTtf(p.ttfBytes, p.codepoint, p.dstX, p.dstY, p.dstW, p.dstH)
+                Log.i(TAG, "uploadColrFromTtf ok=$ok cp=U+${p.codepoint.toString(16)}")
+            }
+            is Pending.Line -> {
+                val ok = renderer.uploadColrLineFromTtf(p.ttfBytes, p.codepoints, p.cursorX, p.baselineY, p.fontSizePx)
+                Log.i(TAG, "uploadColrLineFromTtf ok=$ok cps=${p.codepoints.size}")
+            }
+            null -> Unit
+        }
     }
 
     fun release() {

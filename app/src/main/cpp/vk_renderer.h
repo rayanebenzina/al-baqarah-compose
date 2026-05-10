@@ -21,16 +21,21 @@ class VkRenderer {
     void detachWindow();
     bool drawFrame();
 
-    // Replace both SSBOs and the vertex buffer with a COLR composite
-    // glyph: `allCurves` holds every layer's curves concatenated;
-    // `layerData` has 8 floats per layer:
-    //   [curveOffset, curveCount, _pad, _pad, r, g, b, a]
-    // The vertex buffer is built as N identical quads (one per layer)
-    // each covering (dstX, dstY)..(dstX+dstW, dstY+dstH) and carrying
-    // its layer index as a flat attribute.
-    bool setColrGlyph(const float* allCurves, int totalCurveCount,
-                      const float* layerData, int layerCount,
-                      float dstX, float dstY, float dstW, float dstH);
+    // Replace both SSBOs and the vertex buffer with N COLR layers
+    // belonging to one or more codepoints.
+    //
+    //   `allCurves`  — every layer's curves concatenated, 6 floats per curve.
+    //   `layerData`  — 8 floats per layer (2 vec4 in std430):
+    //                  [curveOffset, curveCount, _pad, _pad, r, g, b, a]
+    //   `layerRects` — 4 floats per layer: [dstX, dstY, dstW, dstH]
+    //
+    // The vertex buffer is built as one quad per layer at each layer's own
+    // destination rect, tagged with its layer index. Layers belonging to
+    // the same codepoint will share rects (and stack as a COLR composite);
+    // layers from different codepoints have distinct rects.
+    bool setColrGlyphs(const float* allCurves, int totalCurveCount,
+                       const float* layerData, const float* layerRects,
+                       int layerCount);
 
     void setScrollY(float y) { scrollY_ = y; }
 

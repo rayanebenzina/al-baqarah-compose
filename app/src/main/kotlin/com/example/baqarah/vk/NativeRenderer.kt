@@ -31,6 +31,15 @@ class NativeRenderer {
         dstX: Float, dstY: Float, dstW: Float, dstH: Float,
     ): Boolean = nUploadColrFromTtf(handle, ttfBytes, codepoint, dstX, dstY, dstW, dstH)
 
+    /**
+     * Lay out N codepoints right-to-left from (cursorX, baselineY) and
+     * render each via the COLR pipeline. Single draw call.
+     */
+    fun uploadColrLineFromTtf(
+        ttfBytes: ByteArray, codepoints: IntArray,
+        cursorX: Float, baselineY: Float, fontSizePx: Float,
+    ): Boolean = nUploadColrLineFromTtf(handle, ttfBytes, codepoints, cursorX, baselineY, fontSizePx)
+
     fun release() {
         if (handle != 0L) {
             nDestroy(handle)
@@ -47,5 +56,9 @@ class NativeRenderer {
     private external fun nUploadColrFromTtf(
         handle: Long, ttfBytes: ByteArray, codepoint: Int,
         dstX: Float, dstY: Float, dstW: Float, dstH: Float,
+    ): Boolean
+    private external fun nUploadColrLineFromTtf(
+        handle: Long, ttfBytes: ByteArray, codepoints: IntArray,
+        cursorX: Float, baselineY: Float, fontSizePx: Float,
     ): Boolean
 }

@@ -582,9 +582,9 @@ bool VkRenderer::ensureVertexBuffer(VkDeviceSize bytes) {
     return true;
 }
 
-bool VkRenderer::setColrGlyph(const float* allCurves, int totalCurveCount,
-                              const float* layerData, int layerCount,
-                              float dstX, float dstY, float dstW, float dstH) {
+bool VkRenderer::setColrGlyphs(const float* allCurves, int totalCurveCount,
+                               const float* layerData, const float* layerRects,
+                               int layerCount) {
     if (!valid()) return false;
     if (totalCurveCount < 0 || layerCount < 0) return false;
     vkDeviceWaitIdle(device_);
@@ -601,7 +601,7 @@ bool VkRenderer::setColrGlyph(const float* allCurves, int totalCurveCount,
     }
     curveCount_ = (uint32_t)totalCurveCount;
 
-    // Upload per-layer data: 8 floats per layer (2 vec4 in std430).
+    // Upload per-layer SSBO data: 8 floats per layer (2 vec4 in std430).
     const VkDeviceSize layerBytes =
         std::max<VkDeviceSize>(16, (VkDeviceSize)layerCount * 8 * sizeof(float));
     if (!ensureLayerBuffer(layerBytes)) return false;
@@ -632,14 +632,14 @@ bool VkRenderer::setColrGlyph(const float* allCurves, int totalCurveCount,
     }
     vkUpdateDescriptorSets(device_, 2, wr, 0, nullptr);
 
-    // Build N quads — one per layer — each tagged with its layer index.
-    // UV.v is flipped (1 at top, 0 at bottom) so that curves in
-    // TTF-native Y-up coordinates render right-side up: the shader's
-    // crossing test stays in TTF coordinate space, preserving the CCW
-    // winding convention that non-zero fill expects.
+    // Build N quads — one per layer, each at its own dst rect, tagged
+    // with its layer index. UV.v is flipped (1 at top, 0 at bottom) so
+    // curves in TTF-native Y-up coordinates render right-side up.
     struct V { float x, y, u, v; int32_t layer; };
     std::vector<V> verts((size_t)layerCount * 6);
     for (int li = 0; li < layerCount; ++li) {
+        const float* r = &layerRects[li * 4];
+        const float dstX = r[0], dstY = r[1], dstW = r[2], dstH = r[3];
         V* q = &verts[(size_t)li * 6];
         q[0] = {dstX,         dstY,         0.0f, 1.0f, (int32_t)li};
         q[1] = {dstX + dstW,  dstY,         1.0f, 1.0f, (int32_t)li};
@@ -658,8 +658,8 @@ bool VkRenderer::setColrGlyph(const float* allCurves, int totalCurveCount,
     }
     vertexCount_ = (uint32_t)verts.size();
 
-    LOGI("setColrGlyph: curves=%d layers=%d verts=%u quad (%.0f,%.0f) %.0fx%.0f",
-         totalCurveCount, layerCount, vertexCount_, dstX, dstY, dstW, dstH);
+    LOGI("setColrGlyphs: curves=%d layers=%d verts=%u",
+         totalCurveCount, layerCount, vertexCount_);
     return true;
 }
 
