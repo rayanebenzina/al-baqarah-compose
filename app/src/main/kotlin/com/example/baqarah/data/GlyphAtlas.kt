@@ -102,51 +102,55 @@ class GlyphAtlas(private val pageSize: Int = 4096) {
             compareByDescending<Pending> { it.height }.thenByDescending { it.width }
         )
 
+        var skyline = Skyline(pageSize)
         var pageIndex = -1
-        var cursorX = 0
-        var cursorY = 0
-        var rowHeight = 0
         var canvas: Canvas? = null
 
         for (g in sorted) {
-            if (pageIndex < 0 || cursorX + g.width > pageSize) {
-                cursorX = 0
-                cursorY += rowHeight
-                rowHeight = 0
-            }
-            if (pageIndex < 0 || cursorY + g.height > pageSize) {
+            if (pageIndex < 0) {
                 val bmp = Bitmap.createBitmap(pageSize, pageSize, Bitmap.Config.ARGB_8888)
                 pages.add(bmp)
                 canvas = Canvas(bmp)
                 pageIndex = pages.size - 1
-                cursorX = 0
-                cursorY = 0
-                rowHeight = 0
+                skyline = Skyline(pageSize)
             }
+            var pos = skyline.place(g.width, g.height, pageSize)
+            if (pos == null) {
+                val bmp = Bitmap.createBitmap(pageSize, pageSize, Bitmap.Config.ARGB_8888)
+                pages.add(bmp)
+                canvas = Canvas(bmp)
+                pageIndex = pages.size - 1
+                skyline = Skyline(pageSize)
+                pos = skyline.place(g.width, g.height, pageSize) ?: continue
+            }
+            val (x, y) = pos
             paint.typeface = g.typeface
             paint.textSize = g.fontSizePx
-            canvas!!.drawText(g.text, cursorX + g.drawOffsetX, cursorY + g.drawOffsetY, paint)
+            canvas!!.drawText(g.text, x + g.drawOffsetX, y + g.drawOffsetY, paint)
             refs[g.key] = GlyphRef(
                 atlasIndex = pageIndex,
-                srcX = cursorX,
-                srcY = cursorY,
+                srcX = x,
+                srcY = y,
                 width = g.width,
                 height = g.height,
                 advance = g.advance,
                 originX = g.originX,
                 originY = g.originY,
             )
-            cursorX += g.width
-            if (g.height > rowHeight) rowHeight = g.height
         }
 
         pending.clear()
+
+        val usedPages = (refs.values.maxOfOrNull { it.atlasIndex } ?: -1) + 1
+        while (pages.size > usedPages) {
+            pages.removeAt(pages.size - 1).recycle()
+        }
 
         if (saveDir != null) {
             saveDir.mkdirs()
             writeIndexTo(File(saveDir, FILE_INDEX))
             for ((i, sw) in pages.withIndex()) {
-                File(saveDir, atlasFileName(i)).outputStream().use { out ->
+                File(saveDir, atlasFileName(i, "png")).outputStream().use { out ->
                     sw.compress(Bitmap.CompressFormat.PNG, 100, out)
                 }
             }
@@ -182,16 +186,96 @@ class GlyphAtlas(private val pageSize: Int = 4096) {
         }
     }
 
+    private class Skyline(private val width: Int) {
+        private val xs = ArrayList<Int>()
+        private val ys = ArrayList<Int>()
+        private val ws = ArrayList<Int>()
+        init { xs.add(0); ys.add(0); ws.add(width) }
+
+        fun place(w: Int, h: Int, maxHeight: Int): Pair<Int, Int>? {
+            var bestY = Int.MAX_VALUE
+            var bestX = -1
+            for (i in xs.indices) {
+                val segX = xs[i]
+                if (segX + w > width) break
+                val topY = maxYOver(i, w) ?: continue
+                if (topY + h > maxHeight) continue
+                if (topY < bestY || (topY == bestY && segX < bestX)) {
+                    bestY = topY
+                    bestX = segX
+                }
+            }
+            if (bestX < 0) return null
+            insertSegment(bestX, bestY + h, w)
+            return bestX to bestY
+        }
+
+        private fun maxYOver(startIdx: Int, w: Int): Int? {
+            var widthLeft = w
+            var maxY = 0
+            var i = startIdx
+            while (widthLeft > 0 && i < xs.size) {
+                if (ys[i] > maxY) maxY = ys[i]
+                widthLeft -= ws[i]
+                i++
+            }
+            return if (widthLeft <= 0) maxY else null
+        }
+
+        private fun insertSegment(newX: Int, newY: Int, newW: Int) {
+            val nx = ArrayList<Int>(xs.size + 2)
+            val ny = ArrayList<Int>(xs.size + 2)
+            val nw = ArrayList<Int>(xs.size + 2)
+            var inserted = false
+            for (i in xs.indices) {
+                val sx = xs[i]; val sy = ys[i]; val sw = ws[i]
+                val ex = sx + sw
+                val nex = newX + newW
+                if (ex <= newX || sx >= nex) {
+                    if (!inserted && sx >= newX) {
+                        nx.add(newX); ny.add(newY); nw.add(newW)
+                        inserted = true
+                    }
+                    nx.add(sx); ny.add(sy); nw.add(sw)
+                } else {
+                    if (sx < newX) {
+                        nx.add(sx); ny.add(sy); nw.add(newX - sx)
+                    }
+                    if (!inserted) {
+                        nx.add(newX); ny.add(newY); nw.add(newW)
+                        inserted = true
+                    }
+                    if (ex > nex) {
+                        nx.add(nex); ny.add(sy); nw.add(ex - nex)
+                    }
+                }
+            }
+            if (!inserted) { nx.add(newX); ny.add(newY); nw.add(newW) }
+
+            xs.clear(); ys.clear(); ws.clear()
+            var i = 0
+            while (i < nx.size) {
+                var x = nx[i]; var y = ny[i]; var ww = nw[i]
+                while (i + 1 < nx.size && ny[i + 1] == y && nx[i + 1] == x + ww) {
+                    ww += nw[i + 1]
+                    i++
+                }
+                xs.add(x); ys.add(y); ws.add(ww)
+                i++
+            }
+        }
+    }
+
     private fun packKey(page: Int, codepoint: Int, sizeBucket: Int): Long =
         (sizeBucket.toLong() shl 48) or
             ((page.toLong() and 0xFFFF) shl 32) or
             (codepoint.toLong() and 0xFFFFFFFFL)
 
     companion object {
-        private const val VERSION = 1
+        private const val VERSION = 5
         private const val FILE_INDEX = "glyph_index.bin"
 
-        private fun atlasFileName(i: Int) = "atlas_$i.png"
+        private fun atlasFileName(i: Int, ext: String = "png") = "atlas_$i.$ext"
 
         suspend fun loadFrom(dir: File): GlyphAtlas? = coroutineScope {
             val indexFile = File(dir, FILE_INDEX)
@@ -218,8 +302,13 @@ class GlyphAtlas(private val pageSize: Int = 4096) {
             val pngFiles = mutableListOf<File>()
             var i = 0
             while (true) {
-                val f = File(dir, atlasFileName(i))
-                if (!f.exists()) break
+                val webp = File(dir, atlasFileName(i, "webp"))
+                val png = File(dir, atlasFileName(i, "png"))
+                val f = when {
+                    webp.exists() && webp.length() > 0 -> webp
+                    png.exists() && png.length() > 0 -> png
+                    else -> null
+                } ?: break
                 pngFiles.add(f); i++
             }
             if (pngFiles.isEmpty()) return@coroutineScope null
