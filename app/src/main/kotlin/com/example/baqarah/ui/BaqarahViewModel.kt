@@ -91,7 +91,7 @@ class BaqarahViewModel(
         val atlasDir = cache.atlasDir(targetFontSizePx)
 
         val plansJob = async(Dispatchers.IO) { cache.loadPlans(targetFontSizePx, widthPx) }
-        val indexJob = async(Dispatchers.IO) { GlyphAtlas.readIndex(atlasDir) }
+        val pngFilesJob = async(Dispatchers.IO) { GlyphAtlas.readPngFiles(atlasDir) }
         val page0Job = async(Dispatchers.IO) {
             val f = java.io.File(atlasDir, "atlas_0.png")
             if (!f.exists() || f.length() == 0L) null
@@ -102,20 +102,19 @@ class BaqarahViewModel(
         }
 
         val cachedPlans = plansJob.await()
-        val indexResult = indexJob.await()
+        val pngFiles = pngFilesJob.await()
         val page0Image = page0Job.await()
 
-        // On cache hit (plans + atlas index both present) we don't need verses.words at all.
-        // Verses only matter when we have to rebuild the atlas.
-        val needFullVerses = indexResult == null
-        val verses: List<Verse> = if (needFullVerses) {
-            cache.loadVerses() ?: quran.alBaqarah().also { cache.saveVerses(it) }
-        } else {
+        // Cache hit if we have plans + page files. Verses only needed for rebuild.
+        val cacheHit = cachedPlans != null && pngFiles != null
+        val verses: List<Verse> = if (cacheHit) {
             emptyList()
+        } else {
+            cache.loadVerses() ?: quran.alBaqarah().also { cache.saveVerses(it) }
         }
 
-        val (atlas, typefaces) = if (indexResult != null) {
-            val (loaded, pngFiles) = indexResult
+        val (atlas, typefaces) = if (cacheHit) {
+            val loaded = GlyphAtlas.empty(pngFiles!!.size)
             if (page0Image != null) loaded.installPage(0, page0Image)
             val priorityPages = cachedPlans?.let { computePriorityPages(it, ayahLimit = 8) } ?: IntArray(0)
             val needSync = priorityPages.filter { it != 0 || page0Image == null }.toIntArray()

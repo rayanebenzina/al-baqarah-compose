@@ -296,10 +296,46 @@ class GlyphAtlas(private val pageSize: Int = 2048) {
 
         private fun atlasFileName(i: Int, ext: String = "png") = "atlas_$i.$ext"
 
-        /** Read just the glyph index (no PNG decode). Returns an atlas with empty pageStates. */
-        fun readIndex(dir: File): Pair<GlyphAtlas, List<File>>? {
+        /**
+         * Cache-hit fast path: enumerate atlas page files and validate the index version
+         * (read 4 bytes), but DO NOT parse the ~6900 GlyphRef entries — they're only
+         * needed for atlas building / re-layout and never queried at runtime when
+         * pre-baked plans are already cached.
+         */
+        fun readPngFiles(dir: File): List<File>? {
             val indexFile = File(dir, FILE_INDEX)
             if (!indexFile.exists()) return null
+            val versionOk = runCatching {
+                DataInputStream(BufferedInputStream(indexFile.inputStream())).use { it.readInt() == VERSION }
+            }.getOrDefault(false)
+            if (!versionOk) return null
+            val pngFiles = mutableListOf<File>()
+            var i = 0
+            while (true) {
+                val webp = File(dir, atlasFileName(i, "webp"))
+                val png = File(dir, atlasFileName(i, "png"))
+                val f = when {
+                    webp.exists() && webp.length() > 0 -> webp
+                    png.exists() && png.length() > 0 -> png
+                    else -> null
+                } ?: break
+                pngFiles.add(f); i++
+            }
+            return if (pngFiles.isEmpty()) null else pngFiles
+        }
+
+        /** Empty atlas with [pageCount] null slots, sealed. For cache-hit path. */
+        fun empty(pageCount: Int): GlyphAtlas {
+            val atlas = GlyphAtlas()
+            for (idx in 0 until pageCount) atlas.finalizedImages.add(null)
+            atlas.sealed = true
+            return atlas
+        }
+
+        /** Slow path: parse the full glyph index. Only needed when plans must be rebuilt. */
+        fun readIndex(dir: File): Pair<GlyphAtlas, List<File>>? {
+            val pngFiles = readPngFiles(dir) ?: return null
+            val indexFile = File(dir, FILE_INDEX)
             val atlas = GlyphAtlas()
             DataInputStream(BufferedInputStream(indexFile.inputStream())).use { inp ->
                 val v = inp.readInt()
@@ -319,19 +355,6 @@ class GlyphAtlas(private val pageSize: Int = 2048) {
                     )
                 }
             }
-            val pngFiles = mutableListOf<File>()
-            var i = 0
-            while (true) {
-                val webp = File(dir, atlasFileName(i, "webp"))
-                val png = File(dir, atlasFileName(i, "png"))
-                val f = when {
-                    webp.exists() && webp.length() > 0 -> webp
-                    png.exists() && png.length() > 0 -> png
-                    else -> null
-                } ?: break
-                pngFiles.add(f); i++
-            }
-            if (pngFiles.isEmpty()) return null
             for (idx in pngFiles.indices) atlas.finalizedImages.add(null)
             atlas.sealed = true
             return atlas to pngFiles
