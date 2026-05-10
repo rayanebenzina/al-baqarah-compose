@@ -46,16 +46,8 @@ class AyahCache(context: Context) {
             for ((id, plan) in plans) {
                 out.writeInt(id)
                 out.writeFloat(plan.totalHeightPx)
-                out.writeInt(plan.quads.size)
-                for (q in plan.quads) {
-                    out.writeInt(q.atlasIndex)
-                    out.writeInt(q.srcX)
-                    out.writeInt(q.srcY)
-                    out.writeInt(q.w)
-                    out.writeInt(q.h)
-                    out.writeInt(q.dstX)
-                    out.writeInt(q.dstY)
-                }
+                out.writeInt(plan.quadData.size)
+                for (v in plan.quadData) out.writeInt(v)
             }
         }
     }
@@ -64,39 +56,27 @@ class AyahCache(context: Context) {
         val file = plansFile(fontSize, widthPx)
         if (!file.exists()) return null
         return runCatching {
-            DataInputStream(BufferedInputStream(file.inputStream())).use { inp ->
-                val version = inp.readInt()
-                if (version != PLANS_VERSION) return null
-                val storedWidth = inp.readInt()
-                if (storedWidth != widthPx) return null
-                val count = inp.readInt()
-                val map = HashMap<Int, LayoutPlan>(count)
-                repeat(count) {
-                    val id = inp.readInt()
-                    val totalHeightPx = inp.readFloat()
-                    val quadCount = inp.readInt()
-                    val quads = ArrayList<GlyphQuad>(quadCount)
-                    repeat(quadCount) {
-                        quads.add(
-                            GlyphQuad(
-                                atlasIndex = inp.readInt(),
-                                srcX = inp.readInt(),
-                                srcY = inp.readInt(),
-                                w = inp.readInt(),
-                                h = inp.readInt(),
-                                dstX = inp.readInt(),
-                                dstY = inp.readInt(),
-                            )
-                        )
-                    }
-                    map[id] = LayoutPlan(quads, totalHeightPx)
-                }
-                map
+            val raw = file.readBytes()
+            val bb = java.nio.ByteBuffer.wrap(raw).order(java.nio.ByteOrder.BIG_ENDIAN)
+            if (bb.int != PLANS_VERSION) return null
+            if (bb.int != widthPx) return null
+            val count = bb.int
+            val map = HashMap<Int, LayoutPlan>(count)
+            repeat(count) {
+                val id = bb.int
+                val totalHeightPx = bb.float
+                val len = bb.int
+                val data = IntArray(len)
+                val ib = bb.asIntBuffer()
+                ib.get(data)
+                bb.position(bb.position() + len * 4)
+                map[id] = LayoutPlan(data, totalHeightPx)
             }
+            map
         }.getOrNull()
     }
 
     companion object {
-        private const val PLANS_VERSION = 1
+        private const val PLANS_VERSION = 2
     }
 }

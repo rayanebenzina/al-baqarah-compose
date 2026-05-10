@@ -1,19 +1,12 @@
 package com.example.baqarah.data
 
-class GlyphQuad(
-    val atlasIndex: Int,
-    val srcX: Int,
-    val srcY: Int,
-    val w: Int,
-    val h: Int,
-    val dstX: Int,
-    val dstY: Int,
-)
-
 class LayoutPlan(
-    val quads: List<GlyphQuad>,
+    /** Flat array of 7 ints per quad: [atlasIndex, srcX, srcY, w, h, dstX, dstY] */
+    val quadData: IntArray,
     val totalHeightPx: Float,
-)
+) {
+    val quadCount: Int get() = quadData.size / 7
+}
 
 fun buildPlan(
     verse: Verse,
@@ -21,13 +14,13 @@ fun buildPlan(
     widthPx: Float,
     fontSizePx: Float,
 ): LayoutPlan {
-    val quads = ArrayList<GlyphQuad>(verse.words.size + 8)
     val space = fontSizePx * 0.18f
     val lineHeight = fontSizePx * 1.6f
     val ascent = fontSizePx * 1.0f
 
     var lineX = widthPx
     var baselineY = ascent
+    val out = ArrayList<Int>(verse.words.size * 7)
 
     for (word in verse.words) {
         val code = word.codeV2 ?: continue
@@ -51,12 +44,18 @@ fun buildPlan(
             val glyphLeft = cursor - g.advance
             val dstX = (glyphLeft + g.originX).toInt()
             val dstY = (baselineY + g.originY).toInt()
-            quads.add(GlyphQuad(g.atlasIndex, g.srcX, g.srcY, g.width, g.height, dstX, dstY))
+            out.add(g.atlasIndex)
+            out.add(g.srcX)
+            out.add(g.srcY)
+            out.add(g.width)
+            out.add(g.height)
+            out.add(dstX)
+            out.add(dstY)
             cursor = glyphLeft
         }
         lineX = cursor - space
     }
 
     val totalHeightPx = baselineY + (lineHeight - ascent)
-    return LayoutPlan(quads, totalHeightPx)
+    return LayoutPlan(out.toIntArray(), totalHeightPx)
 }

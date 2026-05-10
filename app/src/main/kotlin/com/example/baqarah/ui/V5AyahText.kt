@@ -16,12 +16,10 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.example.baqarah.data.GlyphAtlas
 import com.example.baqarah.data.LayoutPlan
-import com.example.baqarah.data.Verse
-import com.example.baqarah.data.buildPlan
 
 @Composable
 fun V5AyahText(
-    verse: Verse,
+    verseId: Int,
     atlas: GlyphAtlas,
     fontSizePx: Float,
     prebuiltPlans: Map<Int, LayoutPlan>,
@@ -34,14 +32,9 @@ fun V5AyahText(
 
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val widthPx = constraints.maxWidth.toFloat()
-        val widthInt = widthPx.toInt()
-        val plan = remember(verse.id, fontSizePx, widthInt, prebuiltWidthPx) {
-            if (widthInt == prebuiltWidthPx) {
-                prebuiltPlans[verse.id] ?: buildPlan(verse, atlas, widthPx, fontSizePx)
-            } else {
-                buildPlan(verse, atlas, widthPx, fontSizePx)
-            }
-        }
+        val plan = remember(verseId, fontSizePx, prebuiltWidthPx) {
+            prebuiltPlans[verseId]
+        } ?: return@BoxWithConstraints
         val totalHeightDp = with(density) { plan.totalHeightPx.toDp() }
         val sizePx = IntSize(widthPx.toInt(), plan.totalHeightPx.toInt().coerceAtLeast(1))
 
@@ -51,15 +44,23 @@ fun V5AyahText(
                 layoutDirection = layoutDirection,
                 size = sizePx,
             ) {
-                for (q in plan.quads) {
-                    val img = atlas.page(q.atlasIndex) ?: continue
-                    drawImage(
-                        image = img,
-                        srcOffset = IntOffset(q.srcX, q.srcY),
-                        srcSize = IntSize(q.w, q.h),
-                        dstOffset = IntOffset(q.dstX, q.dstY),
-                        dstSize = IntSize(q.w, q.h),
-                    )
+                val data = plan.quadData
+                var i = 0
+                while (i < data.size) {
+                    val img = atlas.page(data[i])
+                    if (img != null) {
+                        val srcX = data[i + 1]; val srcY = data[i + 2]
+                        val w = data[i + 3]; val h = data[i + 4]
+                        val dstX = data[i + 5]; val dstY = data[i + 6]
+                        drawImage(
+                            image = img,
+                            srcOffset = IntOffset(srcX, srcY),
+                            srcSize = IntSize(w, h),
+                            dstOffset = IntOffset(dstX, dstY),
+                            dstSize = IntSize(w, h),
+                        )
+                    }
+                    i += 7
                 }
             }
             sizePx

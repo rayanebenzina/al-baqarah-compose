@@ -35,6 +35,7 @@ import kotlinx.coroutines.withContext
 sealed interface BaqarahUiState {
     data object Loading : BaqarahUiState
     data class Ready(
+        val verseIds: List<Int>,
         val verses: List<Verse>,
         val typefaces: Map<Int, Typeface>,
         val atlas: GlyphAtlas,
@@ -89,7 +90,6 @@ class BaqarahViewModel(
         val atlasDir = cache.atlasDir(targetFontSizePx)
 
         val plansJob = async(Dispatchers.IO) { cache.loadPlans(targetFontSizePx, widthPx) }
-        val versesJob = async(Dispatchers.IO) { cache.loadVerses() }
         val indexJob = async(Dispatchers.IO) { GlyphAtlas.readIndex(atlasDir) }
         val page0Job = async(Dispatchers.IO) {
             val f = java.io.File(atlasDir, "atlas_0.png")
@@ -101,9 +101,17 @@ class BaqarahViewModel(
         }
 
         val cachedPlans = plansJob.await()
-        val verses = versesJob.await() ?: quran.alBaqarah().also { cache.saveVerses(it) }
         val indexResult = indexJob.await()
         val page0Image = page0Job.await()
+
+        // On cache hit (plans + atlas index both present) we don't need verses.words at all.
+        // Verses only matter when we have to rebuild the atlas.
+        val needFullVerses = indexResult == null
+        val verses: List<Verse> = if (needFullVerses) {
+            cache.loadVerses() ?: quran.alBaqarah().also { cache.saveVerses(it) }
+        } else {
+            emptyList()
+        }
 
         val (atlas, typefaces) = if (indexResult != null) {
             val (loaded, pngFiles) = indexResult
@@ -125,13 +133,16 @@ class BaqarahViewModel(
             verses.associate { it.id to buildPlan(it, atlas, widthPx.toFloat(), targetFontSizePx.toFloat()) }
         }.also { cache.savePlans(targetFontSizePx, widthPx, it) }
 
-        BaqarahUiState.Ready(verses, typefaces, atlas, targetFontSizePx.toFloat(), plans, widthPx)
+        val verseIds = plans.keys.sorted()
+        BaqarahUiState.Ready(verseIds, verses, typefaces, atlas, targetFontSizePx.toFloat(), plans, widthPx)
     }
 
     private fun computePriorityPages(plans: Map<Int, LayoutPlan>, ayahLimit: Int): IntArray {
         val pages = HashSet<Int>()
         plans.entries.sortedBy { it.key }.take(ayahLimit).forEach { (_, plan) ->
-            for (q in plan.quads) pages.add(q.atlasIndex)
+            val data = plan.quadData
+            var i = 0
+            while (i < data.size) { pages.add(data[i]); i += 7 }
         }
         return pages.toIntArray()
     }

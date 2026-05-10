@@ -95,6 +95,7 @@ fun BaqarahScreen(
                     Button(onClick = { viewModel.reload() }) { Text("Retry") }
                 }
                 is BaqarahUiState.Ready -> VerseList(
+                    verseIds = s.verseIds,
                     verses = s.verses,
                     typefaces = s.typefaces,
                     atlas = s.atlas,
@@ -117,6 +118,7 @@ fun BaqarahScreen(
 
 @Composable
 private fun VerseList(
+    verseIds: List<Int>,
     verses: List<Verse>,
     typefaces: Map<Int, Typeface>,
     atlas: GlyphAtlas,
@@ -126,11 +128,12 @@ private fun VerseList(
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val versesById = remember(verses) { verses.associateBy { it.id } }
 
     Row(modifier = Modifier.fillMaxSize()) {
         LeftScrollbar(
             state = listState,
-            totalCount = verses.size,
+            totalCount = verseIds.size,
             scope = scope,
             modifier = Modifier
                 .width(22.dp)
@@ -144,10 +147,10 @@ private fun VerseList(
             contentPadding = PaddingValues(start = 8.dp, end = 20.dp, top = 16.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            items(verses, key = { it.id }) { verse ->
+            items(verseIds, key = { it }) { verseId ->
                 if (USE_V5) {
                     V5AyahText(
-                        verse = verse,
+                        verseId = verseId,
                         atlas = atlas,
                         fontSizePx = fontSizePx,
                         prebuiltPlans = prebuiltPlans,
@@ -157,14 +160,16 @@ private fun VerseList(
                             .padding(vertical = 8.dp),
                     )
                 } else {
-                    LegacyAyahText(
-                        verse = verse,
-                        typefaces = typefaces,
-                        fontSizePx = fontSizePx,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp),
-                    )
+                    versesById[verseId]?.let { verse ->
+                        LegacyAyahText(
+                            verse = verse,
+                            typefaces = typefaces,
+                            fontSizePx = fontSizePx,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
+                        )
+                    }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f))
             }
