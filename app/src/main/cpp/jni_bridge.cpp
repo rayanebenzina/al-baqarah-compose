@@ -64,6 +64,184 @@ Java_com_example_baqarah_vk_NativeRenderer_nSetScrollY(JNIEnv*, jobject, jlong h
     if (r) r->setScrollY(y);
 }
 
+namespace {
+
+struct FontHandle {
+    std::vector<uint8_t> data;
+    stbtt_fontinfo info{};
+    int unitsPerEm = 1000;
+    bool ready = false;
+};
+
+bool initFontHandle(JNIEnv* env, jbyteArray ba, FontHandle& out) {
+    const jsize n = env->GetArrayLength(ba);
+    if (n <= 0) return false;
+    out.data.assign((size_t)n, 0);
+    env->GetByteArrayRegion(ba, 0, n, reinterpret_cast<jbyte*>(out.data.data()));
+    int offset = stbtt_GetFontOffsetForIndex(out.data.data(), 0);
+    if (offset < 0) return false;
+    if (!stbtt_InitFont(&out.info, out.data.data(), offset)) return false;
+    int ascent = 0, descent = 0, lineGap = 0;
+    stbtt_GetFontVMetrics(&out.info, &ascent, &descent, &lineGap);
+    out.unitsPerEm = (ascent - descent > 0) ? (ascent - descent) : 1000;
+    out.ready = true;
+    return true;
+}
+
+}  // namespace
+
+// Multi-font, multi-verse RTL layout. Each codepoint picks its TTF by
+// fontIndices[i] (parallel to codepoints[]). verseStarts[] partitions
+// codepoints into verses (length numVerses+1; last entry = total
+// codepoint count). Returns total content height in px, or -1 on error.
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
+    JNIEnv* env, jobject, jlong handle,
+    jobjectArray ttfs,
+    jintArray codepoints, jintArray fontIndices, jintArray verseStarts,
+    jfloat screenWidthPx, jfloat leftMarginPx, jfloat rightMarginPx,
+    jfloat topMarginPx, jfloat fontSizePx,
+    jfloat lineSpacingPx, jfloat ayahSpacingPx) {
+    auto* r = asRenderer(handle);
+    if (!r || !ttfs || !codepoints || !fontIndices || !verseStarts) return -1.0f;
+
+    const jsize numFonts = env->GetArrayLength(ttfs);
+    if (numFonts <= 0) return -1.0f;
+    std::vector<FontHandle> fonts((size_t)numFonts);
+    for (jsize i = 0; i < numFonts; ++i) {
+        jbyteArray ba = (jbyteArray)env->GetObjectArrayElement(ttfs, i);
+        if (!ba || !initFontHandle(env, ba, fonts[(size_t)i])) {
+            LOGE("nUploadColrSurah: failed to load font %d", (int)i);
+            env->DeleteLocalRef(ba);
+            return -1.0f;
+        }
+        env->DeleteLocalRef(ba);
+    }
+
+    const jsize cpCount = env->GetArrayLength(codepoints);
+    const jsize fiCount = env->GetArrayLength(fontIndices);
+    const jsize vsCount = env->GetArrayLength(verseStarts);
+    if (cpCount <= 0 || fiCount != cpCount || vsCount < 2) {
+        LOGE("nUploadColrSurah: bad array sizes cp=%d fi=%d vs=%d",
+             (int)cpCount, (int)fiCount, (int)vsCount);
+        return -1.0f;
+    }
+    std::vector<int> cps((size_t)cpCount);
+    std::vector<int> fis((size_t)fiCount);
+    std::vector<int> vss((size_t)vsCount);
+    env->GetIntArrayRegion(codepoints, 0, cpCount, cps.data());
+    env->GetIntArrayRegion(fontIndices, 0, fiCount, fis.data());
+    env->GetIntArrayRegion(verseStarts, 0, vsCount, vss.data());
+
+    std::vector<float> allCurves;
+    std::vector<float> layerData;
+    std::vector<float> layerRects;
+    int totalCurves = 0;
+    int totalLayers = 0;
+
+    const float minX = leftMarginPx;
+    const float maxX = screenWidthPx - rightMarginPx;
+    float baselineY = topMarginPx;
+    const int numVerses = (int)vsCount - 1;
+
+    for (int v = 0; v < numVerses; ++v) {
+        // Begin a new verse on a new line. baselineY already points at the
+        // first baseline (caller passes topMarginPx for verse 0; subsequent
+        // verses get += lineSpacing + ayahSpacing at the end of the prior
+        // verse loop body).
+        float cursorX = maxX;
+
+        for (int i = vss[v]; i < vss[v + 1]; ++i) {
+            const int cp = cps[(size_t)i];
+            const int fi = fis[(size_t)i];
+            if (fi < 0 || fi >= numFonts) continue;
+            FontHandle& font = fonts[(size_t)fi];
+            const float scale = fontSizePx / (float)font.unitsPerEm;
+
+            int gid = stbtt_FindGlyphIndex(&font.info, cp);
+            if (gid == 0) continue;
+
+            int advance = 0, lsb = 0;
+            stbtt_GetGlyphHMetrics(&font.info, gid, &advance, &lsb);
+            const float advancePx = (float)advance * scale;
+
+            // Wrap to next line if this glyph wouldn't fit.
+            if (cursorX - advancePx < minX) {
+                baselineY += lineSpacingPx;
+                cursorX = maxX;
+            }
+
+            int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+            stbtt_GetGlyphBox(&font.info, gid, &x0, &y0, &x1, &y1);
+            const float bw = (float)(x1 - x0);
+            const float bh = (float)(y1 - y0);
+
+            if (bw > 0.0f && bh > 0.0f) {
+                const float dstX = cursorX + (float)x0 * scale;
+                const float dstY = baselineY - (float)y1 * scale;
+                const float dstW = bw * scale;
+                const float dstH = bh * scale;
+
+                std::vector<baqarah::ColrLayer> layers;
+                if (!baqarah::parseColrLayersV0(font.data.data(), (int)font.data.size(),
+                                                gid, layers)) {
+                    layers.push_back({gid, 0xFFFAEBC8u});
+                }
+
+                for (const auto& L : layers) {
+                    baqarah::GlyphOutline lo;
+                    int curveOffset = totalCurves;
+                    int curveCountForLayer = 0;
+                    if (baqarah::extractGlyphOutlineByIndex(font.data.data(),
+                                                            (int)font.data.size(),
+                                                            L.glyphId, lo)) {
+                        for (size_t k = 0; k < lo.curves.size(); k += 2) {
+                            const float u = (lo.curves[k + 0] - (float)x0) / bw;
+                            const float vUV = (lo.curves[k + 1] - (float)y0) / bh;
+                            allCurves.push_back(u);
+                            allCurves.push_back(vUV);
+                        }
+                        curveCountForLayer = lo.curveCount;
+                        totalCurves += curveCountForLayer;
+                    }
+                    layerData.push_back((float)curveOffset);
+                    layerData.push_back((float)curveCountForLayer);
+                    layerData.push_back(0.0f);
+                    layerData.push_back(0.0f);
+                    const float a = ((L.rgba >> 24) & 0xFF) / 255.0f;
+                    const float rC = ((L.rgba >> 16) & 0xFF) / 255.0f;
+                    const float gC = ((L.rgba >> 8) & 0xFF) / 255.0f;
+                    const float bC = (L.rgba & 0xFF) / 255.0f;
+                    layerData.push_back(rC);
+                    layerData.push_back(gC);
+                    layerData.push_back(bC);
+                    layerData.push_back(a);
+                    layerRects.push_back(dstX);
+                    layerRects.push_back(dstY);
+                    layerRects.push_back(dstW);
+                    layerRects.push_back(dstH);
+                    ++totalLayers;
+                }
+            }
+
+            cursorX -= advancePx;
+        }
+
+        // End of verse: advance to the next verse's baseline.
+        baselineY += lineSpacingPx + ayahSpacingPx;
+    }
+
+    LOGI("nUploadColrSurah: verses=%d codepoints=%d -> %d layers, %d curves, contentY=%.0f",
+         numVerses, (int)cpCount, totalLayers, totalCurves, baselineY);
+
+    if (!r->setColrGlyphs(allCurves.data(), totalCurves,
+                          layerData.data(), layerRects.data(),
+                          totalLayers)) {
+        return -1.0f;
+    }
+    return baselineY;
+}
+
 // Lay out an array of codepoints RTL and render each through the
 // COLR pipeline. `cursorX, baselineY` give the starting point (right
 // edge of the line, baseline y). `fontSizePx` is the desired text size.

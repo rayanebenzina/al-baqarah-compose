@@ -32,6 +32,13 @@ class VulkanCanvasView @JvmOverloads constructor(
             val ttfBytes: ByteArray, val codepoints: IntArray,
             val cursorX: Float, val baselineY: Float, val fontSizePx: Float,
         ) : Pending
+        data class Surah(
+            val ttfs: Array<ByteArray>,
+            val codepoints: IntArray, val fontIndices: IntArray, val verseStarts: IntArray,
+            val screenWidthPx: Float, val leftMarginPx: Float, val rightMarginPx: Float,
+            val topMarginPx: Float, val fontSizePx: Float,
+            val lineSpacingPx: Float, val ayahSpacingPx: Float,
+        ) : Pending
     }
     private var pending: Pending? = null
 
@@ -112,6 +119,38 @@ class VulkanCanvasView @JvmOverloads constructor(
         renderHandler.post { if (surfaceReady.get()) applyPending() }
     }
 
+    /**
+     * Schedule the surah upload on the render thread. The lambda is called
+     * after the renderer finishes with the total content height (px, or -1
+     * on failure) so the caller can configure scroll bounds.
+     */
+    fun setColrSurah(
+        ttfs: Array<ByteArray>,
+        codepoints: IntArray, fontIndices: IntArray, verseStarts: IntArray,
+        screenWidthPx: Float, leftMarginPx: Float, rightMarginPx: Float,
+        topMarginPx: Float, fontSizePx: Float,
+        lineSpacingPx: Float, ayahSpacingPx: Float,
+        onUploaded: (totalHeightPx: Float) -> Unit = {},
+    ) {
+        val p = Pending.Surah(
+            ttfs, codepoints, fontIndices, verseStarts,
+            screenWidthPx, leftMarginPx, rightMarginPx,
+            topMarginPx, fontSizePx, lineSpacingPx, ayahSpacingPx,
+        )
+        pending = p
+        renderHandler.post {
+            if (surfaceReady.get()) {
+                val h = renderer.uploadColrSurah(
+                    p.ttfs, p.codepoints, p.fontIndices, p.verseStarts,
+                    p.screenWidthPx, p.leftMarginPx, p.rightMarginPx,
+                    p.topMarginPx, p.fontSizePx, p.lineSpacingPx, p.ayahSpacingPx,
+                )
+                Log.i(TAG, "uploadColrSurah h=$h")
+                post { onUploaded(h) }
+            }
+        }
+    }
+
     fun setContentHeight(totalContentPx: Float) {
         maxScrollY = maxOf(0f, totalContentPx - height.toFloat())
         scrollY = scrollY.coerceIn(0f, maxScrollY)
@@ -181,6 +220,10 @@ class VulkanCanvasView @JvmOverloads constructor(
             is Pending.Line -> {
                 val ok = renderer.uploadColrLineFromTtf(p.ttfBytes, p.codepoints, p.cursorX, p.baselineY, p.fontSizePx)
                 Log.i(TAG, "uploadColrLineFromTtf ok=$ok cps=${p.codepoints.size}")
+            }
+            is Pending.Surah -> {
+                // Surah upload is handled inline in setColrSurah to capture
+                // the returned content height; nothing to re-apply here.
             }
             null -> Unit
         }

@@ -40,6 +40,25 @@ class NativeRenderer {
         cursorX: Float, baselineY: Float, fontSizePx: Float,
     ): Boolean = nUploadColrLineFromTtf(handle, ttfBytes, codepoints, cursorX, baselineY, fontSizePx)
 
+    /**
+     * Render an entire surah. Each codepoint picks its TTF via
+     * fontIndices[i] (parallel array); verseStarts[] partitions
+     * codepoints into per-verse runs (last entry = total codepoint count).
+     * Returns the total content height in pixels (use to size the scroll
+     * range), or -1 on failure.
+     */
+    fun uploadColrSurah(
+        ttfs: Array<ByteArray>,
+        codepoints: IntArray, fontIndices: IntArray, verseStarts: IntArray,
+        screenWidthPx: Float, leftMarginPx: Float, rightMarginPx: Float,
+        topMarginPx: Float, fontSizePx: Float,
+        lineSpacingPx: Float, ayahSpacingPx: Float,
+    ): Float = nUploadColrSurah(
+        handle, ttfs, codepoints, fontIndices, verseStarts,
+        screenWidthPx, leftMarginPx, rightMarginPx, topMarginPx, fontSizePx,
+        lineSpacingPx, ayahSpacingPx,
+    )
+
     fun release() {
         if (handle != 0L) {
             nDestroy(handle)
@@ -61,4 +80,12 @@ class NativeRenderer {
         handle: Long, ttfBytes: ByteArray, codepoints: IntArray,
         cursorX: Float, baselineY: Float, fontSizePx: Float,
     ): Boolean
+    private external fun nUploadColrSurah(
+        handle: Long,
+        ttfs: Array<ByteArray>,
+        codepoints: IntArray, fontIndices: IntArray, verseStarts: IntArray,
+        screenWidthPx: Float, leftMarginPx: Float, rightMarginPx: Float,
+        topMarginPx: Float, fontSizePx: Float,
+        lineSpacingPx: Float, ayahSpacingPx: Float,
+    ): Float
 }
