@@ -354,16 +354,18 @@ bool VkRenderer::createSyncObjects() {
 }
 
 bool VkRenderer::createDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding b{};
-    b.binding = 0;
-    b.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    b.descriptorCount = 1;
-    b.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutBinding b[2]{};
+    for (int i = 0; i < 2; ++i) {
+        b[i].binding = (uint32_t)i;
+        b[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        b[i].descriptorCount = 1;
+        b[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
 
     VkDescriptorSetLayoutCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    ci.bindingCount = 1;
-    ci.pBindings = &b;
+    ci.bindingCount = 2;
+    ci.pBindings = b;
     VK_CHECK(vkCreateDescriptorSetLayout(device_, &ci, nullptr, &dsLayout_));
     return true;
 }
@@ -371,7 +373,7 @@ bool VkRenderer::createDescriptorSetLayout() {
 bool VkRenderer::createDescriptorPool() {
     VkDescriptorPoolSize ps{};
     ps.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    ps.descriptorCount = 1;
+    ps.descriptorCount = 2;
 
     VkDescriptorPoolCreateInfo pci{};
     pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -416,10 +418,10 @@ bool VkRenderer::createPipeline() {
 
     VkVertexInputBindingDescription binding{};
     binding.binding = 0;
-    binding.stride = sizeof(float) * 4;
+    binding.stride = sizeof(float) * 4 + sizeof(int);  // pos2 + uv2 + layerIdx
     binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-    VkVertexInputAttributeDescription attrs[2]{};
+    VkVertexInputAttributeDescription attrs[3]{};
     attrs[0].location = 0;
     attrs[0].binding = 0;
     attrs[0].format = VK_FORMAT_R32G32_SFLOAT;
@@ -428,12 +430,16 @@ bool VkRenderer::createPipeline() {
     attrs[1].binding = 0;
     attrs[1].format = VK_FORMAT_R32G32_SFLOAT;
     attrs[1].offset = sizeof(float) * 2;
+    attrs[2].location = 2;
+    attrs[2].binding = 0;
+    attrs[2].format = VK_FORMAT_R32_SINT;
+    attrs[2].offset = sizeof(float) * 4;
 
     VkPipelineVertexInputStateCreateInfo vi{};
     vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vi.vertexBindingDescriptionCount = 1;
     vi.pVertexBindingDescriptions = &binding;
-    vi.vertexAttributeDescriptionCount = 2;
+    vi.vertexAttributeDescriptionCount = 3;
     vi.pVertexAttributeDescriptions = attrs;
 
     VkPipelineInputAssemblyStateCreateInfo ia{};
@@ -479,9 +485,9 @@ bool VkRenderer::createPipeline() {
     ds.pDynamicStates = dyn;
 
     VkPushConstantRange pc{};
-    pc.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    pc.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pc.offset = 0;
-    pc.size = sizeof(float) * 4;  // viewport(2) + scrollY + curveCount(int as 4B)
+    pc.size = sizeof(float) * 4;  // viewport(2) + scrollY + pad
 
     VkPipelineLayoutCreateInfo pli{};
     pli.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -534,6 +540,27 @@ bool VkRenderer::ensureCurveBuffer(VkDeviceSize bytes) {
     return true;
 }
 
+bool VkRenderer::ensureLayerBuffer(VkDeviceSize bytes) {
+    if (layerBufferCapacity_ >= bytes && layerBuffer_ != VK_NULL_HANDLE) return true;
+    if (layerBuffer_ != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, layerBuffer_, nullptr);
+        layerBuffer_ = VK_NULL_HANDLE;
+    }
+    if (layerBufferMem_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, layerBufferMem_, nullptr);
+        layerBufferMem_ = VK_NULL_HANDLE;
+    }
+    if (!createBuffer(bytes,
+                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                      layerBuffer_, layerBufferMem_)) {
+        return false;
+    }
+    layerBufferCapacity_ = bytes;
+    return true;
+}
+
 bool VkRenderer::ensureVertexBuffer(VkDeviceSize bytes) {
     if (vbufCapacity_ >= bytes && vbuf_ != VK_NULL_HANDLE) return true;
     if (vbuf_ != VK_NULL_HANDLE) {
@@ -555,58 +582,84 @@ bool VkRenderer::ensureVertexBuffer(VkDeviceSize bytes) {
     return true;
 }
 
-bool VkRenderer::setOutlineGlyph(const float* curves, int curveCount,
-                                 float dstX, float dstY, float dstW, float dstH) {
+bool VkRenderer::setColrGlyph(const float* allCurves, int totalCurveCount,
+                              const float* layerData, int layerCount,
+                              float dstX, float dstY, float dstW, float dstH) {
     if (!valid()) return false;
-    if (curveCount < 0) return false;
+    if (totalCurveCount < 0 || layerCount < 0) return false;
     vkDeviceWaitIdle(device_);
 
-    // Upload curve data to SSBO (round up to at least 16 bytes to avoid empty
-    // allocations).
+    // Upload curves
     const VkDeviceSize curveBytes =
-        std::max<VkDeviceSize>(16, (VkDeviceSize)curveCount * 6 * sizeof(float));
+        std::max<VkDeviceSize>(16, (VkDeviceSize)totalCurveCount * 6 * sizeof(float));
     if (!ensureCurveBuffer(curveBytes)) return false;
-    if (curveCount > 0) {
+    if (totalCurveCount > 0) {
         void* mapped = nullptr;
         vkMapMemory(device_, curveBufferMem_, 0, curveBytes, 0, &mapped);
-        std::memcpy(mapped, curves, curveCount * 6 * sizeof(float));
+        std::memcpy(mapped, allCurves, totalCurveCount * 6 * sizeof(float));
         vkUnmapMemory(device_, curveBufferMem_);
     }
-    curveCount_ = (uint32_t)curveCount;
+    curveCount_ = (uint32_t)totalCurveCount;
 
-    // Re-bind SSBO into the descriptor set.
-    VkDescriptorBufferInfo bi{};
-    bi.buffer = curveBuffer_;
-    bi.offset = 0;
-    bi.range = VK_WHOLE_SIZE;
-    VkWriteDescriptorSet wr{};
-    wr.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    wr.dstSet = descSet_;
-    wr.dstBinding = 0;
-    wr.descriptorCount = 1;
-    wr.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    wr.pBufferInfo = &bi;
-    vkUpdateDescriptorSets(device_, 1, &wr, 0, nullptr);
+    // Upload per-layer data: 8 floats per layer (2 vec4 in std430).
+    const VkDeviceSize layerBytes =
+        std::max<VkDeviceSize>(16, (VkDeviceSize)layerCount * 8 * sizeof(float));
+    if (!ensureLayerBuffer(layerBytes)) return false;
+    if (layerCount > 0) {
+        void* mapped = nullptr;
+        vkMapMemory(device_, layerBufferMem_, 0, layerBytes, 0, &mapped);
+        std::memcpy(mapped, layerData, layerCount * 8 * sizeof(float));
+        vkUnmapMemory(device_, layerBufferMem_);
+    }
+    layerCount_ = (uint32_t)layerCount;
 
-    // Build one quad covering (dstX, dstY) to (dstX+dstW, dstY+dstH).
-    struct V { float x, y, u, v; };
-    V verts[6] = {
-        {dstX,         dstY,         0.0f, 0.0f},
-        {dstX + dstW,  dstY,         1.0f, 0.0f},
-        {dstX,         dstY + dstH,  0.0f, 1.0f},
-        {dstX + dstW,  dstY,         1.0f, 0.0f},
-        {dstX + dstW,  dstY + dstH,  1.0f, 1.0f},
-        {dstX,         dstY + dstH,  0.0f, 1.0f},
-    };
-    if (!ensureVertexBuffer(sizeof(verts))) return false;
-    void* mapped = nullptr;
-    vkMapMemory(device_, vbufMem_, 0, sizeof(verts), 0, &mapped);
-    std::memcpy(mapped, verts, sizeof(verts));
-    vkUnmapMemory(device_, vbufMem_);
-    vertexCount_ = 6;
+    // Rebind both SSBOs into the descriptor set.
+    VkDescriptorBufferInfo bi[2]{};
+    bi[0].buffer = curveBuffer_;
+    bi[0].offset = 0;
+    bi[0].range = VK_WHOLE_SIZE;
+    bi[1].buffer = layerBuffer_;
+    bi[1].offset = 0;
+    bi[1].range = VK_WHOLE_SIZE;
+    VkWriteDescriptorSet wr[2]{};
+    for (int i = 0; i < 2; ++i) {
+        wr[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        wr[i].dstSet = descSet_;
+        wr[i].dstBinding = (uint32_t)i;
+        wr[i].descriptorCount = 1;
+        wr[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        wr[i].pBufferInfo = &bi[i];
+    }
+    vkUpdateDescriptorSets(device_, 2, wr, 0, nullptr);
 
-    LOGI("setOutlineGlyph: curves=%d, quad (%.0f,%.0f) %.0fx%.0f",
-         curveCount, dstX, dstY, dstW, dstH);
+    // Build N quads — one per layer — each tagged with its layer index.
+    // UV.v is flipped (1 at top, 0 at bottom) so that curves in
+    // TTF-native Y-up coordinates render right-side up: the shader's
+    // crossing test stays in TTF coordinate space, preserving the CCW
+    // winding convention that non-zero fill expects.
+    struct V { float x, y, u, v; int32_t layer; };
+    std::vector<V> verts((size_t)layerCount * 6);
+    for (int li = 0; li < layerCount; ++li) {
+        V* q = &verts[(size_t)li * 6];
+        q[0] = {dstX,         dstY,         0.0f, 1.0f, (int32_t)li};
+        q[1] = {dstX + dstW,  dstY,         1.0f, 1.0f, (int32_t)li};
+        q[2] = {dstX,         dstY + dstH,  0.0f, 0.0f, (int32_t)li};
+        q[3] = {dstX + dstW,  dstY,         1.0f, 1.0f, (int32_t)li};
+        q[4] = {dstX + dstW,  dstY + dstH,  1.0f, 0.0f, (int32_t)li};
+        q[5] = {dstX,         dstY + dstH,  0.0f, 0.0f, (int32_t)li};
+    }
+    const VkDeviceSize vBytes = std::max<VkDeviceSize>(sizeof(V), verts.size() * sizeof(V));
+    if (!ensureVertexBuffer(vBytes)) return false;
+    if (!verts.empty()) {
+        void* mapped = nullptr;
+        vkMapMemory(device_, vbufMem_, 0, verts.size() * sizeof(V), 0, &mapped);
+        std::memcpy(mapped, verts.data(), verts.size() * sizeof(V));
+        vkUnmapMemory(device_, vbufMem_);
+    }
+    vertexCount_ = (uint32_t)verts.size();
+
+    LOGI("setColrGlyph: curves=%d layers=%d verts=%u quad (%.0f,%.0f) %.0fx%.0f",
+         totalCurveCount, layerCount, vertexCount_, dstX, dstY, dstW, dstH);
     return true;
 }
 
@@ -633,7 +686,7 @@ void VkRenderer::recordCommandBuffer(uint32_t imageIndex) {
     rb.pClearValues = &clear;
     vkCmdBeginRenderPass(cb, &rb, VK_SUBPASS_CONTENTS_INLINE);
 
-    if (vertexCount_ > 0 && curveCount_ > 0) {
+    if (vertexCount_ > 0 && curveCount_ > 0 && layerCount_ > 0) {
         VkViewport vp{};
         vp.x = 0.0f;
         vp.y = 0.0f;
@@ -651,19 +704,12 @@ void VkRenderer::recordCommandBuffer(uint32_t imageIndex) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1,
                                 &descSet_, 0, nullptr);
 
-        // Push constants: vec2 viewport, float scrollY, int curveCount.
-        // Layout matches GLSL: [f, f, f, i] at 4-byte alignments.
-        union {
-            uint32_t u[4];
-            struct { float vx, vy, scroll; int32_t cc; } s;
-        } pc;
-        pc.s.vx = (float)scExtent_.width;
-        pc.s.vy = (float)scExtent_.height;
-        pc.s.scroll = scrollY_.load(std::memory_order_relaxed);
-        pc.s.cc = (int32_t)curveCount_;
+        float pc[4] = {
+            (float)scExtent_.width, (float)scExtent_.height,
+            scrollY_.load(std::memory_order_relaxed), 0.0f,
+        };
         vkCmdPushConstants(cb, pipelineLayout_,
-                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(pc), &pc);
+                           VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), pc);
 
         VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(cb, 0, 1, &vbuf_, &offset);
@@ -782,6 +828,14 @@ void VkRenderer::destroyPipelineResources() {
     if (curveBufferMem_ != VK_NULL_HANDLE) {
         vkFreeMemory(device_, curveBufferMem_, nullptr);
         curveBufferMem_ = VK_NULL_HANDLE;
+    }
+    if (layerBuffer_ != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, layerBuffer_, nullptr);
+        layerBuffer_ = VK_NULL_HANDLE;
+    }
+    if (layerBufferMem_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, layerBufferMem_, nullptr);
+        layerBufferMem_ = VK_NULL_HANDLE;
     }
     if (dsLayout_ != VK_NULL_HANDLE) {
         vkDestroyDescriptorSetLayout(device_, dsLayout_, nullptr);

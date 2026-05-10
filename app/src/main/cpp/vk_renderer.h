@@ -21,13 +21,16 @@ class VkRenderer {
     void detachWindow();
     bool drawFrame();
 
-    // Replace the curve SSBO with the given quadratic-Bezier outline (3 vec2
-    // per curve; 6 floats per curve), and rebuild the vertex buffer as a
-    // single quad covering (dstX, dstY) with size (dstW, dstH) and UVs
-    // spanning (0, 0) to (1, 1) — fragment shader walks the SSBO and fills
-    // pixels whose UV is inside the outline.
-    bool setOutlineGlyph(const float* curves, int curveCount,
-                         float dstX, float dstY, float dstW, float dstH);
+    // Replace both SSBOs and the vertex buffer with a COLR composite
+    // glyph: `allCurves` holds every layer's curves concatenated;
+    // `layerData` has 8 floats per layer:
+    //   [curveOffset, curveCount, _pad, _pad, r, g, b, a]
+    // The vertex buffer is built as N identical quads (one per layer)
+    // each covering (dstX, dstY)..(dstX+dstW, dstY+dstH) and carrying
+    // its layer index as a flat attribute.
+    bool setColrGlyph(const float* allCurves, int totalCurveCount,
+                      const float* layerData, int layerCount,
+                      float dstX, float dstY, float dstW, float dstH);
 
     void setScrollY(float y) { scrollY_ = y; }
 
@@ -46,6 +49,7 @@ class VkRenderer {
     bool createPipeline();
     bool createDescriptorPool();
     bool ensureCurveBuffer(VkDeviceSize bytes);
+    bool ensureLayerBuffer(VkDeviceSize bytes);
     bool ensureVertexBuffer(VkDeviceSize bytes);
 
     void recordCommandBuffer(uint32_t imageIndex);
@@ -87,6 +91,11 @@ class VkRenderer {
     VkDeviceMemory curveBufferMem_ = VK_NULL_HANDLE;
     VkDeviceSize curveBufferCapacity_ = 0;
     uint32_t curveCount_ = 0;
+
+    VkBuffer layerBuffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory layerBufferMem_ = VK_NULL_HANDLE;
+    VkDeviceSize layerBufferCapacity_ = 0;
+    uint32_t layerCount_ = 0;
 
     VkBuffer vbuf_ = VK_NULL_HANDLE;
     VkDeviceMemory vbufMem_ = VK_NULL_HANDLE;

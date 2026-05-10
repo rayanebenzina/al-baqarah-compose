@@ -55,14 +55,17 @@ class VulkanDebugActivity : Activity() {
                 val pageNumber = firstWord.pageNumber
                 Log.i(TAG, "rendering U+${firstCp.toString(16)} from page $pageNumber")
 
-                // Force the font to be on disk (FontRepository downloads if missing).
-                app.fontRepository.typefaceForPage(pageNumber)
+                // Render the same glyph via Android Canvas as a reference, save
+                // to /sdcard/Download/ for visual comparison.
+                val tf = app.fontRepository.typefaceForPage(pageNumber)
+                renderReferenceBitmap(firstCp, tf)
+
                 val ttfBytes = withContext(Dispatchers.IO) {
                     File(filesDir, "qpc-v4/p$pageNumber.ttf").readBytes()
                 }
                 Log.i(TAG, "loaded p$pageNumber.ttf: ${ttfBytes.size} bytes")
 
-                v.setOutlineFromTtf(
+                v.setColrGlyph(
                     ttfBytes = ttfBytes,
                     codepoint = firstCp,
                     dstX = cx - side / 2f,
@@ -73,6 +76,29 @@ class VulkanDebugActivity : Activity() {
             } catch (t: Throwable) {
                 Log.e(TAG, "glyph load failed", t)
             }
+        }
+    }
+
+    private fun renderReferenceBitmap(codepoint: Int, typeface: android.graphics.Typeface) {
+        try {
+            val w = 800
+            val h = 800
+            val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(bmp)
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                this.typeface = typeface
+                textSize = 640f
+                color = android.graphics.Color.WHITE
+                textAlign = android.graphics.Paint.Align.CENTER
+            }
+            val fm = paint.fontMetrics
+            val baselineY = h / 2f - (fm.ascent + fm.descent) / 2f
+            canvas.drawText(String(Character.toChars(codepoint)), w / 2f, baselineY, paint)
+            val out = File(getExternalFilesDir(null), "ref_glyph.png")
+            out.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            Log.i(TAG, "wrote ref bitmap to ${out.absolutePath}")
+        } catch (t: Throwable) {
+            Log.e(TAG, "ref render failed", t)
         }
     }
 

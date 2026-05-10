@@ -12,8 +12,28 @@
 
 namespace baqarah {
 
+int findGlyphIndex(const uint8_t* ttfData, int ttfSize, int codepoint) {
+    (void)ttfSize;
+    stbtt_fontinfo font;
+    int offset = stbtt_GetFontOffsetForIndex(ttfData, 0);
+    if (offset < 0) return 0;
+    if (!stbtt_InitFont(&font, ttfData, offset)) return 0;
+    return stbtt_FindGlyphIndex(&font, codepoint);
+}
+
 bool extractGlyphOutline(const uint8_t* ttfData, int ttfSize,
                          int codepoint, GlyphOutline& out) {
+    int glyphIndex = findGlyphIndex(ttfData, ttfSize, codepoint);
+    if (glyphIndex == 0) {
+        LOGE("no glyph for codepoint U+%04X", codepoint);
+        return false;
+    }
+    return extractGlyphOutlineByIndex(ttfData, ttfSize, glyphIndex, out);
+}
+
+bool extractGlyphOutlineByIndex(const uint8_t* ttfData, int ttfSize,
+                                int glyphIndex, GlyphOutline& out) {
+    (void)ttfSize;
     stbtt_fontinfo font;
     int offset = stbtt_GetFontOffsetForIndex(ttfData, 0);
     if (offset < 0) {
@@ -22,12 +42,6 @@ bool extractGlyphOutline(const uint8_t* ttfData, int ttfSize,
     }
     if (!stbtt_InitFont(&font, ttfData, offset)) {
         LOGE("stbtt_InitFont failed");
-        return false;
-    }
-
-    int glyphIndex = stbtt_FindGlyphIndex(&font, codepoint);
-    if (glyphIndex == 0) {
-        LOGE("no glyph for codepoint U+%04X", codepoint);
         return false;
     }
 
@@ -42,19 +56,13 @@ bool extractGlyphOutline(const uint8_t* ttfData, int ttfSize,
     stbtt_GetFontVMetrics(&font, &ascent, &descent, &lineGap);
     (void)lineGap;
 
-    // unitsPerEm from head table — stbtt doesn't expose directly, but
-    // ascent - descent is typically close to the em size for most fonts.
-    // QPC v4 fonts use 2048 units/em; we'll detect via the head table
-    // version stbtt parses indirectly.
-    int unitsPerEm = ascent - descent;  // approximate
+    int unitsPerEm = ascent - descent;
     if (unitsPerEm <= 0) unitsPerEm = 1024;
 
     // Extract glyph shape: a list of stbtt_vertex describing the outline.
-    // Each vertex is either a vmove, vline, vcurve (quadratic) or vcubic.
     stbtt_vertex* vertices = nullptr;
     int vertexCount = stbtt_GetGlyphShape(&font, glyphIndex, &vertices);
     if (vertexCount == 0 || vertices == nullptr) {
-        LOGE("no outline for glyph %d", glyphIndex);
         if (vertices) stbtt_FreeShape(&font, vertices);
         return false;
     }
@@ -65,13 +73,18 @@ bool extractGlyphOutline(const uint8_t* ttfData, int ttfSize,
     out.curves.clear();
     out.curves.reserve((size_t)vertexCount * 6);
 
+    int nMove = 0, nLine = 0, nCurve = 0, nCubic = 0;
     float cx = 0.0f, cy = 0.0f;  // current pen position
+    float startX = 0.0f, startY = 0.0f;  // first point of current contour
     for (int i = 0; i < vertexCount; ++i) {
         const stbtt_vertex& v = vertices[i];
         switch (v.type) {
             case STBTT_vmove:
                 cx = (float)v.x;
                 cy = (float)v.y;
+                startX = cx;
+                startY = cy;
+                ++nMove;
                 break;
             case STBTT_vline: {
                 float nx = (float)v.x;
@@ -85,6 +98,7 @@ bool extractGlyphOutline(const uint8_t* ttfData, int ttfSize,
                     out.curves.push_back(nx); out.curves.push_back(ny);
                 }
                 cx = nx; cy = ny;
+                ++nLine;
                 break;
             }
             case STBTT_vcurve: {
@@ -96,26 +110,43 @@ bool extractGlyphOutline(const uint8_t* ttfData, int ttfSize,
                 out.curves.push_back(ctrlX); out.curves.push_back(ctrlY);
                 out.curves.push_back(nx);    out.curves.push_back(ny);
                 cx = nx; cy = ny;
+                ++nCurve;
                 break;
             }
             case STBTT_vcubic: {
-                // Cubic Bezier — approximate as two quadratics. For QPC v4
-                // (TrueType native), cubics only appear via stbtt's
-                // emission for OpenType OTF — should be rare. Use a simple
-                // midpoint split for now.
+                // Cubic Bezier — approximate as two quadratics using a
+                // single mid-split. For better accuracy, use the average
+                // of the two cubic control points as the quadratic control,
+                // which exactly matches the cubic's mid-tangent direction.
                 float nx = (float)v.x;
                 float ny = (float)v.y;
                 float c1x = (float)v.cx;
                 float c1y = (float)v.cy;
                 float c2x = (float)v.cx1;
                 float c2y = (float)v.cy1;
-                // Midpoint of cubic: easy quadratic approximation
-                float qcx = (c1x + c2x) * 0.5f;
-                float qcy = (c1y + c2y) * 0.5f;
-                out.curves.push_back(cx);  out.curves.push_back(cy);
-                out.curves.push_back(qcx); out.curves.push_back(qcy);
-                out.curves.push_back(nx);  out.curves.push_back(ny);
+                // Midpoint of cubic at t=0.5: B(0.5) = (p0 + 3c1 + 3c2 + p3) / 8
+                float midX = (cx + 3.0f * c1x + 3.0f * c2x + nx) * 0.125f;
+                float midY = (cy + 3.0f * c1y + 3.0f * c2y + ny) * 0.125f;
+                // First quadratic: from (cx,cy) through midpoint, control
+                // chosen to match cubic's tangent at t=0 (which is in
+                // direction c1 - p0).
+                // Tangent-extension control for a quadratic A->M with start tangent T:
+                //   control = A + T * something — for simplest approximation,
+                //   put control halfway along the cubic's first segment.
+                float q1cx = (cx + c1x) * 0.5f;
+                float q1cy = (cy + c1y) * 0.5f;
+                out.curves.push_back(cx);   out.curves.push_back(cy);
+                out.curves.push_back(q1cx); out.curves.push_back(q1cy);
+                out.curves.push_back(midX); out.curves.push_back(midY);
+                // Second quadratic: from midpoint to (nx,ny), control on
+                // cubic's second segment.
+                float q2cx = (c2x + nx) * 0.5f;
+                float q2cy = (c2y + ny) * 0.5f;
+                out.curves.push_back(midX); out.curves.push_back(midY);
+                out.curves.push_back(q2cx); out.curves.push_back(q2cy);
+                out.curves.push_back(nx);   out.curves.push_back(ny);
                 cx = nx; cy = ny;
+                ++nCubic;
                 break;
             }
         }
@@ -129,8 +160,8 @@ bool extractGlyphOutline(const uint8_t* ttfData, int ttfSize,
     out.advanceX = advance;
     out.unitsPerEm = unitsPerEm;
 
-    LOGI("extracted glyph U+%04X: %d curves, bbox (%d,%d)..(%d,%d), advance %d, unitsPerEm %d",
-         codepoint, out.curveCount, x0, y0, x1, y1, advance, unitsPerEm);
+    LOGI("extracted gid %d: %d curves (move=%d line=%d quad=%d cubic=%d), bbox (%d,%d)..(%d,%d), advance %d",
+         glyphIndex, out.curveCount, nMove, nLine, nCurve, nCubic, x0, y0, x1, y1, advance);
     return true;
 }
 

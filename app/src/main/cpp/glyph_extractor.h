@@ -28,4 +28,13 @@ struct GlyphOutline {
 bool extractGlyphOutline(const uint8_t* ttfData, int ttfSize,
                          int codepoint, GlyphOutline& out);
 
+// Same, but takes a font-internal glyph index instead of a codepoint.
+// Used for COLR layer glyphs which aren't cmap-mapped.
+bool extractGlyphOutlineByIndex(const uint8_t* ttfData, int ttfSize,
+                                int glyphIndex, GlyphOutline& out);
+
+// Look up the cmap glyph index for a codepoint without extracting the
+// outline. Returns 0 if not present.
+int findGlyphIndex(const uint8_t* ttfData, int ttfSize, int codepoint);
+
 }  // namespace baqarah

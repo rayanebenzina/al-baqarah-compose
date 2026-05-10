@@ -20,22 +20,16 @@ class NativeRenderer {
     fun setScrollY(y: Float) = nSetScrollY(handle, y)
 
     /**
-     * Upload a quadratic-Bezier outline as the current renderable glyph.
-     * `curves` holds `curveCount * 6` floats: (p0.x, p0.y, p1.x, p1.y,
-     * p2.x, p2.y) per curve. The shape is drawn into the screen-space
-     * rectangle (dstX, dstY)..(dstX + dstW, dstY + dstH) with UV
-     * sweeping (0, 0) to (1, 1).
+     * Resolve a COLR composite glyph from the supplied TTF: parse the
+     * codepoint's base glyph index, look up its colour layers from the
+     * COLR/CPAL tables, extract each layer's outline, and upload them as
+     * N stacked quads to the renderer. Falls back to a single white
+     * layer using the base glyph itself when the font has no COLR data.
      */
-    fun uploadOutlineGlyph(
-        curves: FloatArray, curveCount: Int,
-        dstX: Float, dstY: Float, dstW: Float, dstH: Float,
-    ): Boolean = nUploadOutlineGlyph(handle, curves, curveCount, dstX, dstY, dstW, dstH)
-
-    /** Extract a glyph outline from a TTF (using stb_truetype) and upload. */
-    fun uploadOutlineFromTtf(
+    fun uploadColrFromTtf(
         ttfBytes: ByteArray, codepoint: Int,
         dstX: Float, dstY: Float, dstW: Float, dstH: Float,
-    ): Boolean = nUploadOutlineFromTtf(handle, ttfBytes, codepoint, dstX, dstY, dstW, dstH)
+    ): Boolean = nUploadColrFromTtf(handle, ttfBytes, codepoint, dstX, dstY, dstW, dstH)
 
     fun release() {
         if (handle != 0L) {
@@ -50,11 +44,7 @@ class NativeRenderer {
     private external fun nDetachSurface(handle: Long)
     private external fun nDrawFrame(handle: Long): Boolean
     private external fun nSetScrollY(handle: Long, y: Float)
-    private external fun nUploadOutlineGlyph(
-        handle: Long, curves: FloatArray, curveCount: Int,
-        dstX: Float, dstY: Float, dstW: Float, dstH: Float,
-    ): Boolean
-    private external fun nUploadOutlineFromTtf(
+    private external fun nUploadColrFromTtf(
         handle: Long, ttfBytes: ByteArray, codepoint: Int,
         dstX: Float, dstY: Float, dstW: Float, dstH: Float,
     ): Boolean

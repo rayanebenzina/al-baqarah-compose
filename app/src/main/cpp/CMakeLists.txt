@@ -42,6 +42,7 @@ add_library(baqarah_vk SHARED
     vk_renderer.cpp
     stb_truetype_impl.cpp
     glyph_extractor.cpp
+    colr_parser.cpp
     jni_bridge.cpp
     ${SHADER_HEADERS}
 )

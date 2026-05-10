@@ -6,11 +6,13 @@
 #include <cstdio>
 #include <vector>
 
+#include "colr_parser.h"
 #include "glyph_extractor.h"
 #include "vk_renderer.h"
 
 #define LOG_TAG "BaqarahVkJNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 using baqarah::VkRenderer;
 
@@ -62,7 +64,7 @@ Java_com_example_baqarah_vk_NativeRenderer_nSetScrollY(JNIEnv*, jobject, jlong h
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_example_baqarah_vk_NativeRenderer_nUploadOutlineFromTtf(
+Java_com_example_baqarah_vk_NativeRenderer_nUploadColrFromTtf(
     JNIEnv* env, jobject, jlong handle,
     jbyteArray ttfBytes, jint codepoint,
     jfloat dstX, jfloat dstY, jfloat dstW, jfloat dstH) {
@@ -74,44 +76,90 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadOutlineFromTtf(
     std::vector<uint8_t> ttf((size_t)ttfSize);
     env->GetByteArrayRegion(ttfBytes, 0, ttfSize, reinterpret_cast<jbyte*>(ttf.data()));
 
-    baqarah::GlyphOutline g;
-    if (!baqarah::extractGlyphOutline(ttf.data(), ttfSize, codepoint, g)) {
+    // Look up base glyph index for codepoint.
+    int baseGid = baqarah::findGlyphIndex(ttf.data(), ttfSize, codepoint);
+    if (baseGid == 0) {
+        LOGE("nUploadColrFromTtf: no glyph for U+%04X", codepoint);
         return JNI_FALSE;
     }
 
-    const float dx = (float)(g.bboxMaxX - g.bboxMinX);
-    const float dy = (float)(g.bboxMaxY - g.bboxMinY);
-    if (dx <= 0.0f || dy <= 0.0f) return JNI_FALSE;
-
-    // Normalize outline to UV space [0, 1]^2 with Y flipped (TTF font units
-    // are Y-up; our quads have Y-down UV). Even-odd fill is winding-agnostic
-    // so the flip doesn't change which side is inside.
-    std::vector<float> norm(g.curves.size());
-    for (size_t i = 0; i < g.curves.size(); i += 2) {
-        norm[i + 0] = (g.curves[i + 0] - (float)g.bboxMinX) / dx;
-        norm[i + 1] = ((float)g.bboxMaxY - g.curves[i + 1]) / dy;
-    }
-
-    return r->setOutlineGlyph(norm.data(), g.curveCount, dstX, dstY, dstW, dstH)
-               ? JNI_TRUE
-               : JNI_FALSE;
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_example_baqarah_vk_NativeRenderer_nUploadOutlineGlyph(
-    JNIEnv* env, jobject, jlong handle,
-    jfloatArray curves, jint curveCount,
-    jfloat dstX, jfloat dstY, jfloat dstW, jfloat dstH) {
-    auto* r = asRenderer(handle);
-    if (!r || !curves || curveCount < 0) return JNI_FALSE;
-    const jsize len = env->GetArrayLength(curves);
-    if (len != curveCount * 6) {
-        LOGI("nUploadOutlineGlyph: size mismatch %d != %d*6", (int)len, curveCount);
+    // Extract the base glyph to get its bbox — all layers normalize to this.
+    baqarah::GlyphOutline base;
+    if (!baqarah::extractGlyphOutlineByIndex(ttf.data(), ttfSize, baseGid, base)) {
+        LOGE("nUploadColrFromTtf: no outline for base gid %d", baseGid);
         return JNI_FALSE;
     }
-    std::vector<float> curveBuf((size_t)len);
-    env->GetFloatArrayRegion(curves, 0, len, curveBuf.data());
-    return r->setOutlineGlyph(curveBuf.data(), curveCount, dstX, dstY, dstW, dstH)
-               ? JNI_TRUE
-               : JNI_FALSE;
+
+    // Resolve COLR layers. If absent, fall back to a single layer = base glyph
+    // in opaque white.
+    std::vector<baqarah::ColrLayer> layers;
+    if (!baqarah::parseColrLayersV0(ttf.data(), ttfSize, baseGid, layers)) {
+        layers.push_back({baseGid, 0xFFFFFFFFu});
+        LOGI("nUploadColrFromTtf: no COLR for gid %d, using base as single layer", baseGid);
+    }
+
+    const float bx0 = (float)base.bboxMinX;
+    const float by0 = (float)base.bboxMinY;
+    const float bx1 = (float)base.bboxMaxX;
+    const float by1 = (float)base.bboxMaxY;
+    const float bw = bx1 - bx0;
+    const float bh = by1 - by0;
+    if (bw <= 0.0f || bh <= 0.0f) return JNI_FALSE;
+
+    std::vector<float> allCurves;
+    std::vector<float> layerData;  // 8 floats per layer
+    allCurves.reserve(2048);
+    layerData.reserve(layers.size() * 8);
+
+    int totalCurves = 0;
+    int emittedLayers = 0;
+    for (const auto& L : layers) {
+        baqarah::GlyphOutline lo;
+        if (!baqarah::extractGlyphOutlineByIndex(ttf.data(), ttfSize, L.glyphId, lo)) {
+            // Empty / missing layer — record an empty range so vertex/layer
+            // counts stay aligned (the shader will discard via count==0).
+            layerData.push_back(0.0f); layerData.push_back(0.0f);
+            layerData.push_back(0.0f); layerData.push_back(0.0f);
+            const float a = ((L.rgba >> 24) & 0xFF) / 255.0f;
+            const float r = ((L.rgba >> 16) & 0xFF) / 255.0f;
+            const float g = ((L.rgba >> 8)  & 0xFF) / 255.0f;
+            const float b = ( L.rgba        & 0xFF) / 255.0f;
+            layerData.push_back(r); layerData.push_back(g);
+            layerData.push_back(b); layerData.push_back(a);
+            emittedLayers++;
+            continue;
+        }
+        const int offset = totalCurves;
+        const int count = lo.curveCount;
+        // Append normalized curves (UV in base-glyph bbox). Do NOT flip Y
+        // here — the vertex shader will flip the quad UV space instead, so
+        // the shader winding test stays consistent with TTF's CCW
+        // convention.
+        for (size_t i = 0; i < lo.curves.size(); i += 2) {
+            const float u = (lo.curves[i + 0] - bx0) / bw;
+            const float v = (lo.curves[i + 1] - by0) / bh;
+            allCurves.push_back(u);
+            allCurves.push_back(v);
+        }
+        totalCurves += count;
+
+        // Per-layer entry (2 vec4 / 8 floats).
+        layerData.push_back((float)offset);
+        layerData.push_back((float)count);
+        layerData.push_back(0.0f); layerData.push_back(0.0f);
+        const float a = ((L.rgba >> 24) & 0xFF) / 255.0f;
+        const float r = ((L.rgba >> 16) & 0xFF) / 255.0f;
+        const float g = ((L.rgba >> 8)  & 0xFF) / 255.0f;
+        const float b = ( L.rgba        & 0xFF) / 255.0f;
+        layerData.push_back(r); layerData.push_back(g);
+        layerData.push_back(b); layerData.push_back(a);
+        emittedLayers++;
+    }
+
+    LOGI("nUploadColrFromTtf U+%04X (gid %d): %d layers, %d curves total",
+         codepoint, baseGid, emittedLayers, totalCurves);
+
+    return r->setColrGlyph(allCurves.data(), totalCurves,
+                           layerData.data(), emittedLayers,
+                           dstX, dstY, dstW, dstH) ? JNI_TRUE : JNI_FALSE;
 }
