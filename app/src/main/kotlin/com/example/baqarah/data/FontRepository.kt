@@ -2,10 +2,14 @@ package com.example.baqarah.data
 
 import android.content.Context
 import android.graphics.Typeface
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -13,22 +17,31 @@ import java.io.File
 class FontRepository(context: Context) {
 
     private val cacheDir = File(context.filesDir, "qpc-v4").apply { mkdirs() }
-    private val client = OkHttpClient()
-    private val mutex = Mutex()
-    private val cache = mutableMapOf<Int, Typeface>()
+    private val client = OkHttpClient.Builder()
+        .dispatcher(Dispatcher().apply {
+            maxRequests = 32
+            maxRequestsPerHost = 16
+        })
+        .build()
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val cache = HashMap<Int, Deferred<Typeface>>()
+    private val cacheLock = Mutex()
 
     suspend fun typefaceForPage(page: Int): Typeface {
-        cache[page]?.let { return it }
-        return mutex.withLock {
+        val deferred = cacheLock.withLock {
             cache.getOrPut(page) {
-                val file = File(cacheDir, "p$page.ttf")
-                if (!file.exists() || file.length() == 0L) downloadFont(page, file)
-                Typeface.createFromFile(file)
+                scope.async {
+                    val file = File(cacheDir, "p$page.ttf")
+                    if (!file.exists() || file.length() == 0L) downloadFont(page, file)
+                    Typeface.createFromFile(file)
+                }
             }
         }
+        return deferred.await()
     }
 
-    private suspend fun downloadFont(page: Int, dest: File) = withContext(Dispatchers.IO) {
+    private fun downloadFont(page: Int, dest: File) {
         val url = FONT_URL_TEMPLATE.format(page)
         val req = Request.Builder().url(url).build()
         client.newCall(req).execute().use { resp ->

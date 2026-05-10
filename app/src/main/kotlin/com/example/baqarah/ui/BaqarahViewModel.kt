@@ -25,6 +25,7 @@ import com.example.baqarah.data.buildPlan
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -122,7 +123,7 @@ class BaqarahViewModel(
             loaded to emptyMap<Int, Typeface>()
         } else {
             val pages = verses.flatMap { v -> v.words.map { it.pageNumber } }.toSet()
-            val tfs = pages.associateWith { fonts.typefaceForPage(it) }
+            val tfs = pages.map { p -> async { p to fonts.typefaceForPage(p) } }.awaitAll().toMap()
             val built = withContext(Dispatchers.Default) {
                 buildAtlas(verses, tfs, targetFontSizePx.toFloat(), atlasDir)
             }

@@ -33,7 +33,7 @@ data class GlyphRef(
     val originY: Float,
 )
 
-class GlyphAtlas(private val pageSize: Int = 4096) {
+class GlyphAtlas(private val pageSize: Int = 2048) {
 
     private class Pending(
         val key: Long,
@@ -291,7 +291,7 @@ class GlyphAtlas(private val pageSize: Int = 4096) {
             (codepoint.toLong() and 0xFFFFFFFFL)
 
     companion object {
-        private const val VERSION = 6
+        private const val VERSION = 7
         private const val FILE_INDEX = "glyph_index.bin"
 
         private fun atlasFileName(i: Int, ext: String = "png") = "atlas_$i.$ext"
