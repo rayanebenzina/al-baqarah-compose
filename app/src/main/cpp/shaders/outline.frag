@@ -5,7 +5,6 @@ layout(location = 0) out vec4 outColor;
 
 layout(std430, set = 0, binding = 0) readonly buffer Curves {
     // Tightly packed quadratic Beziers: 3 vec2 per curve (p0, p1, p2).
-    // GLSL std430 packs vec2[] as vec2 each — equivalent to flat 2*N floats.
     vec2 pts[];
 };
 
@@ -17,10 +16,9 @@ layout(push_constant) uniform PC {
 
 const float kEps = 1e-6;
 
-// Count ray-curve crossings to the RIGHT of point p, for a single
-// quadratic Bezier (a, b, c).
+// For a single quadratic Bezier (a, b, c), count even-odd crossings to
+// the right of point p (i.e. roots of y(t) = p.y with x(t) > p.x).
 int crossingsForCurve(vec2 p, vec2 a, vec2 b, vec2 c) {
-    // y(t) = (a.y - 2b.y + c.y) t^2 + 2(b.y - a.y) t + a.y
     float A = a.y - 2.0 * b.y + c.y;
     float B = 2.0 * (b.y - a.y);
     float C = a.y - p.y;
@@ -28,7 +26,6 @@ int crossingsForCurve(vec2 p, vec2 a, vec2 b, vec2 c) {
     int hits = 0;
 
     if (abs(A) < kEps) {
-        // Degenerates to linear: B t + C = 0
         if (abs(B) < kEps) return 0;
         float t = -C / B;
         if (t >= 0.0 && t <= 1.0) {
@@ -62,9 +59,7 @@ int crossingsForCurve(vec2 p, vec2 a, vec2 b, vec2 c) {
     return hits;
 }
 
-void main() {
-    vec2 p = vUV;
-
+bool insideAt(vec2 p) {
     int crossings = 0;
     for (int i = 0; i < pc.curveCount; ++i) {
         vec2 a = pts[i * 3 + 0];
@@ -72,10 +67,28 @@ void main() {
         vec2 c = pts[i * 3 + 2];
         crossings += crossingsForCurve(p, a, b, c);
     }
+    return (crossings & 1) == 1;
+}
 
-    if ((crossings & 1) == 1) {
-        outColor = vec4(0.96, 0.92, 0.78, 1.0);
-    } else {
-        discard;
-    }
+void main() {
+    // 4x rotated-grid supersampling — sample inside/outside at 4 sub-pixel
+    // offsets and average. dFdx/dFdy give the per-pixel UV step, so we
+    // shift in UV space by quarter-pixel amounts.
+    vec2 duvdx = dFdx(vUV);
+    vec2 duvdy = dFdy(vUV);
+
+    // Rotated 2x2 grid: offsets ±1/8 and ±3/8 of a pixel
+    vec2 s0 = vUV + duvdx * 0.125 + duvdy * 0.375;
+    vec2 s1 = vUV + duvdx * 0.375 + duvdy * -0.125;
+    vec2 s2 = vUV + duvdx * -0.125 + duvdy * -0.375;
+    vec2 s3 = vUV + duvdx * -0.375 + duvdy * 0.125;
+
+    float cov = 0.0;
+    if (insideAt(s0)) cov += 0.25;
+    if (insideAt(s1)) cov += 0.25;
+    if (insideAt(s2)) cov += 0.25;
+    if (insideAt(s3)) cov += 0.25;
+
+    if (cov <= 0.001) discard;
+    outColor = vec4(0.96, 0.92, 0.78, cov);
 }
