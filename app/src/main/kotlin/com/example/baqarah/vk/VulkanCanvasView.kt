@@ -27,6 +27,7 @@ class VulkanCanvasView @JvmOverloads constructor(
         data class Glyph(val alpha: ByteArray, val w: Int, val h: Int, val spread: Int) : Pending
         data class Ayah(
             val alpha: ByteArray, val w: Int, val h: Int, val spread: Int,
+            val cells: IntArray, val cellCount: Int,
             val quads: FloatArray, val quadCount: Int,
         ) : Pending
     }
@@ -100,9 +101,10 @@ class VulkanCanvasView @JvmOverloads constructor(
 
     fun setAyahAtlas(
         alpha: ByteArray, w: Int, h: Int, spread: Int,
+        cells: IntArray, cellCount: Int,
         quads: FloatArray, quadCount: Int,
     ) {
-        pending = Pending.Ayah(alpha, w, h, spread, quads, quadCount)
+        pending = Pending.Ayah(alpha, w, h, spread, cells, cellCount, quads, quadCount)
         renderHandler.post { if (surfaceReady.get()) applyPending() }
     }
 
@@ -173,8 +175,12 @@ class VulkanCanvasView @JvmOverloads constructor(
                 Log.i(TAG, "uploadGlyphAlpha ok=$ok")
             }
             is Pending.Ayah -> {
-                val ok = renderer.uploadAyahAtlas(p.alpha, p.w, p.h, p.spread, p.quads, p.quadCount)
-                Log.i(TAG, "uploadAyahAtlas ok=$ok quads=${p.quadCount}")
+                val ok = renderer.uploadAyahAtlas(
+                    p.alpha, p.w, p.h, p.spread,
+                    p.cells, p.cellCount,
+                    p.quads, p.quadCount,
+                )
+                Log.i(TAG, "uploadAyahAtlas ok=$ok cells=${p.cellCount} quads=${p.quadCount}")
             }
             null -> Unit
         }

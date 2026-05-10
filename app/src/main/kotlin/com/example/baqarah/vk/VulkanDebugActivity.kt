@@ -45,6 +45,7 @@ class VulkanDebugActivity : Activity() {
 
         return scope.launch {
             try {
+                val t0 = android.os.SystemClock.elapsedRealtime()
                 val verses = withContext(Dispatchers.IO) {
                     (app.ayahCache.loadVerses(SURAH)
                         ?: app.quranRepository.versesByChapter(SURAH).also {
@@ -52,22 +53,28 @@ class VulkanDebugActivity : Activity() {
                         })
                         .take(VERSE_COUNT)
                 }
+                val t1 = android.os.SystemClock.elapsedRealtime()
                 val typefaces = loadTypefaces(app, verses)
+                val t2 = android.os.SystemClock.elapsedRealtime()
                 val result = withContext(Dispatchers.Default) {
                     AyahSdfBuilder().build(
                         verses = verses,
                         typefaces = typefaces,
-                        fontSizePx = 96f,
+                        fontSizePx = 64f,
                         screenWidthPx = displayWidth,
                         padding = 12,
                     )
                 }
-                Log.i(TAG, "surah built: atlas=${result.atlasW}x${result.atlasH} quads=${result.quadCount} h=${result.totalHeightPx}")
+                val t3 = android.os.SystemClock.elapsedRealtime()
+                Log.i(TAG, "surah built: verses=${verses.size} atlas=${result.atlasW}x${result.atlasH} cells=${result.cellCount} quads=${result.quadCount} h=${result.totalHeightPx}")
+                Log.i(TAG, "timings ms: verses=${t1-t0} fonts=${t2-t1} build=${t3-t2}")
                 v.setAyahAtlas(
                     alpha = result.atlasAlpha,
                     w = result.atlasW,
                     h = result.atlasH,
                     spread = 8,
+                    cells = result.cells,
+                    cellCount = result.cellCount,
                     quads = result.quads,
                     quadCount = result.quadCount,
                 )
@@ -90,6 +97,6 @@ class VulkanDebugActivity : Activity() {
     companion object {
         private const val TAG = "BaqarahVkDebug"
         private const val SURAH = 2  // Al-Baqarah
-        private const val VERSE_COUNT = 10
+        private const val VERSE_COUNT = 286
     }
 }

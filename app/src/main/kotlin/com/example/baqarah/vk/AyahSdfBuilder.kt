@@ -16,6 +16,9 @@ class AyahSdfBuilder {
         val atlasAlpha: ByteArray,
         val atlasW: Int,
         val atlasH: Int,
+        /** 4 ints per cell in the atlas: [x, y, w, h] */
+        val cells: IntArray,
+        val cellCount: Int,
         /** 8 floats per quad: [dstX, dstY, dstW, dstH, u0, v0, u1, v1] */
         val quads: FloatArray,
         val quadCount: Int,
@@ -91,32 +94,21 @@ class AyahSdfBuilder {
         val sortedByHeight = unique.values.sortedByDescending { it.h }
         val totalArea = sortedByHeight.sumOf { it.w * it.h }
         val approxSide = sqrt(totalArea.toFloat() * 1.4f).toInt()
+        val maxAtlasW = 8192
         var atlasW = 64
-        while (atlasW < approxSide) atlasW *= 2
-        val placements: HashMap<Long, IntArray>
-        var atlasH: Int
-        while (true) {
-            val pm = HashMap<Long, IntArray>(unique.size)
-            val packer = ShelfPacker(atlasW)
-            var ok = true
-            for (g in sortedByHeight) {
-                val pos = packer.place(g.w, g.h)
-                if (pos == null) {
-                    ok = false; break
-                }
-                val key = (g.pageNumber.toLong() shl 32) or g.codepoint.toLong()
-                pm[key] = pos
-            }
-            if (ok) {
-                placements = pm
-                atlasH = nextPow2(packer.totalHeight)
-                break
-            }
-            atlasW *= 2
-            check(atlasW <= 4096) { "atlas pack failed: too large" }
+        while (atlasW < approxSide && atlasW < maxAtlasW) atlasW *= 2
+        atlasW = atlasW.coerceAtMost(maxAtlasW)
+        val placements = HashMap<Long, IntArray>(unique.size)
+        val packer = ShelfPacker(atlasW)
+        for (g in sortedByHeight) {
+            val pos = packer.place(g.w, g.h)
+                ?: error("glyph too wide for atlas: ${g.w}x${g.h} in atlasW=$atlasW")
+            val key = (g.pageNumber.toLong() shl 32) or g.codepoint.toLong()
+            placements[key] = pos
         }
+        val atlasH = nextPow2(packer.totalHeight)
 
-        val atlasBmp = Bitmap.createBitmap(atlasW, atlasH, Bitmap.Config.ARGB_8888)
+        val atlasBmp = Bitmap.createBitmap(atlasW, atlasH, Bitmap.Config.ALPHA_8)
         val canvas = Canvas(atlasBmp)
         for (g in unique.values) {
             val key = (g.pageNumber.toLong() shl 32) or g.codepoint.toLong()
@@ -176,16 +168,27 @@ class AyahSdfBuilder {
             contentY = baselineY + (lineHeight - ascent) + ayahSpacingPx
         }
 
-        val pixels = IntArray(atlasW * atlasH)
-        atlasBmp.getPixels(pixels, 0, atlasW, 0, 0, atlasW, atlasH)
         val alpha = ByteArray(atlasW * atlasH)
-        for (i in pixels.indices) alpha[i] = ((pixels[i] ushr 24) and 0xFF).toByte()
+        atlasBmp.copyPixelsToBuffer(java.nio.ByteBuffer.wrap(alpha))
         atlasBmp.recycle()
+
+        val cellArr = IntArray(unique.size * 4)
+        var ci = 0
+        for ((key, g) in unique) {
+            val pos = placements[key] ?: continue
+            cellArr[ci++] = pos[0]
+            cellArr[ci++] = pos[1]
+            cellArr[ci++] = g.w
+            cellArr[ci++] = g.h
+        }
+        val cellCount = ci / 4
 
         return Result(
             atlasAlpha = alpha,
             atlasW = atlasW,
             atlasH = atlasH,
+            cells = cellArr,
+            cellCount = cellCount,
             quads = quadBuf.toFloatArray(),
             quadCount = quadCount,
             totalHeightPx = contentY,

@@ -22,8 +22,9 @@ class NativeRenderer {
 
     fun uploadAyahAtlas(
         alpha: ByteArray, w: Int, h: Int, spread: Int,
+        cells: IntArray, cellCount: Int,
         quads: FloatArray, quadCount: Int,
-    ): Boolean = nUploadAyahAtlas(handle, alpha, w, h, spread, quads, quadCount)
+    ): Boolean = nUploadAyahAtlas(handle, alpha, w, h, spread, cells, cellCount, quads, quadCount)
 
     fun setScrollY(y: Float) = nSetScrollY(handle, y)
 
@@ -42,6 +43,7 @@ class NativeRenderer {
     private external fun nUploadGlyphAlpha(handle: Long, pixels: ByteArray, w: Int, h: Int, spread: Int): Boolean
     private external fun nUploadAyahAtlas(
         handle: Long, alpha: ByteArray, w: Int, h: Int, spread: Int,
+        cells: IntArray, cellCount: Int,
         quads: FloatArray, quadCount: Int,
     ): Boolean
     private external fun nSetScrollY(handle: Long, y: Float)

@@ -18,4 +18,12 @@ namespace baqarah {
 void computeSdf(const uint8_t* alpha, int w, int h, int spread,
                 uint8_t threshold, uint8_t* out);
 
+// Read a `cellW`x`cellH` alpha region at (cellX, cellY) in an atlas
+// of stride `atlasW`, compute its SDF in place. Padding around each
+// cell in the atlas must be at least `spread` for cells to be
+// independent.
+void computeSdfCellInPlace(uint8_t* atlas, int atlasW, int atlasH,
+                           int cellX, int cellY, int cellW, int cellH,
+                           int spread, uint8_t threshold);
+
 }  // namespace baqarah

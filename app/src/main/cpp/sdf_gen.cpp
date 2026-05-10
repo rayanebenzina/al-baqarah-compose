@@ -75,6 +75,29 @@ void edt2d(const float* f, int w, int h, float* d) {
 
 }  // namespace
 
+void computeSdfCellInPlace(uint8_t* atlas, int atlasW, int atlasH,
+                           int cellX, int cellY, int cellW, int cellH,
+                           int spread, uint8_t threshold) {
+    if (cellW <= 0 || cellH <= 0) return;
+    if (cellX < 0 || cellY < 0) return;
+    if (cellX + cellW > atlasW || cellY + cellH > atlasH) return;
+
+    const int n = cellW * cellH;
+    std::vector<uint8_t> cellAlpha((size_t)n);
+    for (int y = 0; y < cellH; ++y) {
+        std::memcpy(cellAlpha.data() + (size_t)y * cellW,
+                    atlas + (size_t)(cellY + y) * atlasW + cellX,
+                    (size_t)cellW);
+    }
+    std::vector<uint8_t> cellSdf((size_t)n);
+    computeSdf(cellAlpha.data(), cellW, cellH, spread, threshold, cellSdf.data());
+    for (int y = 0; y < cellH; ++y) {
+        std::memcpy(atlas + (size_t)(cellY + y) * atlasW + cellX,
+                    cellSdf.data() + (size_t)y * cellW,
+                    (size_t)cellW);
+    }
+}
+
 void computeSdf(const uint8_t* alpha, int w, int h, int spread,
                 uint8_t threshold, uint8_t* out) {
     const int n = w * h;
