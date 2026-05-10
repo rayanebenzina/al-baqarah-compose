@@ -21,15 +21,13 @@ class VkRenderer {
     void detachWindow();
     bool drawFrame();
 
-    // Replace the SDF atlas texture and rebuild the test geometry to a single
-    // glyph-sized quad centered on the screen. Used for Phase 2b development.
-    bool setGlyphSdf(const uint8_t* sdfPixels, int w, int h);
-
-    // Replace the SDF atlas with a packed ayah atlas and rebuild the vertex
-    // buffer from the supplied quad list. Each quad is 8 floats:
-    // [dstX, dstY, dstW, dstH, u0, v0, u1, v1].
-    bool setAyahAtlas(const uint8_t* sdfPixels, int w, int h,
-                      const float* quads, int quadCount);
+    // Replace the curve SSBO with the given quadratic-Bezier outline (3 vec2
+    // per curve; 6 floats per curve), and rebuild the vertex buffer as a
+    // single quad covering (dstX, dstY) with size (dstW, dstH) and UVs
+    // spanning (0, 0) to (1, 1) — fragment shader walks the SSBO and fills
+    // pixels whose UV is inside the outline.
+    bool setOutlineGlyph(const float* curves, int curveCount,
+                         float dstX, float dstY, float dstW, float dstH);
 
     void setScrollY(float y) { scrollY_ = y; }
 
@@ -46,10 +44,9 @@ class VkRenderer {
     bool createSyncObjects();
     bool createDescriptorSetLayout();
     bool createPipeline();
-    bool createSampler();
-    bool createSdfTexture();
-    bool createVertexBuffer();
-    bool createDescriptorPoolAndSet();
+    bool createDescriptorPool();
+    bool ensureCurveBuffer(VkDeviceSize bytes);
+    bool ensureVertexBuffer(VkDeviceSize bytes);
 
     void recordCommandBuffer(uint32_t imageIndex);
     void destroySwapchainResources();
@@ -60,8 +57,6 @@ class VkRenderer {
     uint32_t findMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props);
     bool createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props,
                       VkBuffer& buf, VkDeviceMemory& mem);
-    bool runOneShot(void (*record)(VkCommandBuffer, void*), void* user);
-    bool uploadImageR8(VkImage image, uint32_t w, uint32_t h, const uint8_t* pixels);
 
     VkInstance instance_ = VK_NULL_HANDLE;
     VkPhysicalDevice physical_ = VK_NULL_HANDLE;
@@ -87,16 +82,15 @@ class VkRenderer {
     VkDescriptorSetLayout dsLayout_ = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
-    VkSampler sampler_ = VK_NULL_HANDLE;
 
-    VkImage sdfImage_ = VK_NULL_HANDLE;
-    VkDeviceMemory sdfMemory_ = VK_NULL_HANDLE;
-    VkImageView sdfView_ = VK_NULL_HANDLE;
-    uint32_t sdfW_ = 0;
-    uint32_t sdfH_ = 0;
+    VkBuffer curveBuffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory curveBufferMem_ = VK_NULL_HANDLE;
+    VkDeviceSize curveBufferCapacity_ = 0;
+    uint32_t curveCount_ = 0;
 
     VkBuffer vbuf_ = VK_NULL_HANDLE;
     VkDeviceMemory vbufMem_ = VK_NULL_HANDLE;
+    VkDeviceSize vbufCapacity_ = 0;
     uint32_t vertexCount_ = 0;
 
     VkDescriptorPool descPool_ = VK_NULL_HANDLE;

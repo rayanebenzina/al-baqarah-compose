@@ -3,11 +3,8 @@
 #include <android/native_window_jni.h>
 #include <jni.h>
 
-#include <algorithm>
-#include <thread>
 #include <vector>
 
-#include "sdf_gen.h"
 #include "vk_renderer.h"
 
 #define LOG_TAG "BaqarahVkJNI"
@@ -63,90 +60,20 @@ Java_com_example_baqarah_vk_NativeRenderer_nSetScrollY(JNIEnv*, jobject, jlong h
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_example_baqarah_vk_NativeRenderer_nUploadAyahAtlas(
-    JNIEnv* env, jobject, jlong handle, jbyteArray alpha, jint w, jint h, jint spread,
-    jintArray cells, jint cellCount,
-    jfloatArray quads, jint quadCount) {
+Java_com_example_baqarah_vk_NativeRenderer_nUploadOutlineGlyph(
+    JNIEnv* env, jobject, jlong handle,
+    jfloatArray curves, jint curveCount,
+    jfloat dstX, jfloat dstY, jfloat dstW, jfloat dstH) {
     auto* r = asRenderer(handle);
-    if (!r || !alpha || !cells || !quads || w <= 0 || h <= 0 || spread <= 0 ||
-        cellCount < 0 || quadCount < 0) {
+    if (!r || !curves || curveCount < 0) return JNI_FALSE;
+    const jsize len = env->GetArrayLength(curves);
+    if (len != curveCount * 6) {
+        LOGI("nUploadOutlineGlyph: size mismatch %d != %d*6", (int)len, curveCount);
         return JNI_FALSE;
     }
-    const jsize aLen = env->GetArrayLength(alpha);
-    if (aLen != w * h) {
-        LOGI("nUploadAyahAtlas: alpha size %d != %dx%d", (int)aLen, w, h);
-        return JNI_FALSE;
-    }
-    const jsize cLen = env->GetArrayLength(cells);
-    if (cLen != cellCount * 4) {
-        LOGI("nUploadAyahAtlas: cells size %d != %d*4", (int)cLen, cellCount);
-        return JNI_FALSE;
-    }
-    const jsize qLen = env->GetArrayLength(quads);
-    if (qLen != quadCount * 8) {
-        LOGI("nUploadAyahAtlas: quads size %d != %d*8", (int)qLen, quadCount);
-        return JNI_FALSE;
-    }
-
-    std::vector<uint8_t> sdfBuf((size_t)aLen);
-    env->GetByteArrayRegion(alpha, 0, aLen, reinterpret_cast<jbyte*>(sdfBuf.data()));
-
-    std::vector<int> cellBuf((size_t)cLen);
-    env->GetIntArrayRegion(cells, 0, cLen, cellBuf.data());
-
-    const int hw = (int)std::thread::hardware_concurrency();
-    const int numThreads = std::clamp(hw > 0 ? hw : 4, 1, 8);
-    if (cellCount > 0 && numThreads > 1) {
-        std::vector<std::thread> workers;
-        workers.reserve((size_t)numThreads);
-        const int chunk = (cellCount + numThreads - 1) / numThreads;
-        for (int t = 0; t < numThreads; ++t) {
-            int start = t * chunk;
-            int end = std::min(start + chunk, cellCount);
-            if (start >= end) break;
-            workers.emplace_back([start, end, &cellBuf, &sdfBuf, w, h, spread]() {
-                for (int i = start; i < end; ++i) {
-                    const int* c = &cellBuf[(size_t)i * 4];
-                    baqarah::computeSdfCellInPlace(sdfBuf.data(), w, h,
-                                                   c[0], c[1], c[2], c[3],
-                                                   spread, /*threshold=*/128);
-                }
-            });
-        }
-        for (auto& t : workers) t.join();
-    } else {
-        for (int i = 0; i < cellCount; ++i) {
-            const int* c = &cellBuf[(size_t)i * 4];
-            baqarah::computeSdfCellInPlace(sdfBuf.data(), w, h,
-                                           c[0], c[1], c[2], c[3],
-                                           spread, /*threshold=*/128);
-        }
-    }
-
-    std::vector<float> quadBuf((size_t)qLen);
-    env->GetFloatArrayRegion(quads, 0, qLen, quadBuf.data());
-
-    return r->setAyahAtlas(sdfBuf.data(), w, h, quadBuf.data(), quadCount) ? JNI_TRUE
-                                                                            : JNI_FALSE;
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_example_baqarah_vk_NativeRenderer_nUploadGlyphAlpha(
-    JNIEnv* env, jobject, jlong handle, jbyteArray alpha, jint w, jint h, jint spread) {
-    auto* r = asRenderer(handle);
-    if (!r || !alpha || w <= 0 || h <= 0 || spread <= 0) return JNI_FALSE;
-
-    const jsize len = env->GetArrayLength(alpha);
-    if (len != w * h) {
-        LOGI("nUploadGlyphAlpha: size mismatch %d vs %dx%d=%d", (int)len, w, h, w * h);
-        return JNI_FALSE;
-    }
-
-    std::vector<uint8_t> alphaBuf((size_t)len);
-    env->GetByteArrayRegion(alpha, 0, len, reinterpret_cast<jbyte*>(alphaBuf.data()));
-
-    std::vector<uint8_t> sdfBuf((size_t)len);
-    baqarah::computeSdf(alphaBuf.data(), w, h, spread, /*threshold=*/128, sdfBuf.data());
-
-    return r->setGlyphSdf(sdfBuf.data(), w, h) ? JNI_TRUE : JNI_FALSE;
+    std::vector<float> curveBuf((size_t)len);
+    env->GetFloatArrayRegion(curves, 0, len, curveBuf.data());
+    return r->setOutlineGlyph(curveBuf.data(), curveCount, dstX, dstY, dstW, dstH)
+               ? JNI_TRUE
+               : JNI_FALSE;
 }

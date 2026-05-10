@@ -17,16 +17,19 @@ class NativeRenderer {
 
     fun drawFrame(): Boolean = nDrawFrame(handle)
 
-    fun uploadGlyphAlpha(pixels: ByteArray, w: Int, h: Int, spread: Int): Boolean =
-        nUploadGlyphAlpha(handle, pixels, w, h, spread)
-
-    fun uploadAyahAtlas(
-        alpha: ByteArray, w: Int, h: Int, spread: Int,
-        cells: IntArray, cellCount: Int,
-        quads: FloatArray, quadCount: Int,
-    ): Boolean = nUploadAyahAtlas(handle, alpha, w, h, spread, cells, cellCount, quads, quadCount)
-
     fun setScrollY(y: Float) = nSetScrollY(handle, y)
+
+    /**
+     * Upload a quadratic-Bezier outline as the current renderable glyph.
+     * `curves` holds `curveCount * 6` floats: (p0.x, p0.y, p1.x, p1.y,
+     * p2.x, p2.y) per curve. The shape is drawn into the screen-space
+     * rectangle (dstX, dstY)..(dstX + dstW, dstY + dstH) with UV
+     * sweeping (0, 0) to (1, 1).
+     */
+    fun uploadOutlineGlyph(
+        curves: FloatArray, curveCount: Int,
+        dstX: Float, dstY: Float, dstW: Float, dstH: Float,
+    ): Boolean = nUploadOutlineGlyph(handle, curves, curveCount, dstX, dstY, dstW, dstH)
 
     fun release() {
         if (handle != 0L) {
@@ -40,11 +43,9 @@ class NativeRenderer {
     private external fun nAttachSurface(handle: Long, surface: Surface): Boolean
     private external fun nDetachSurface(handle: Long)
     private external fun nDrawFrame(handle: Long): Boolean
-    private external fun nUploadGlyphAlpha(handle: Long, pixels: ByteArray, w: Int, h: Int, spread: Int): Boolean
-    private external fun nUploadAyahAtlas(
-        handle: Long, alpha: ByteArray, w: Int, h: Int, spread: Int,
-        cells: IntArray, cellCount: Int,
-        quads: FloatArray, quadCount: Int,
-    ): Boolean
     private external fun nSetScrollY(handle: Long, y: Float)
+    private external fun nUploadOutlineGlyph(
+        handle: Long, curves: FloatArray, curveCount: Int,
+        dstX: Float, dstY: Float, dstW: Float, dstH: Float,
+    ): Boolean
 }

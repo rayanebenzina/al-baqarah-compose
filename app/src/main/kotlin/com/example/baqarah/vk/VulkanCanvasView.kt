@@ -23,15 +23,11 @@ class VulkanCanvasView @JvmOverloads constructor(
     private val running = AtomicBoolean(false)
     private lateinit var renderHandler: android.os.Handler
 
-    private sealed interface Pending {
-        data class Glyph(val alpha: ByteArray, val w: Int, val h: Int, val spread: Int) : Pending
-        data class Ayah(
-            val alpha: ByteArray, val w: Int, val h: Int, val spread: Int,
-            val cells: IntArray, val cellCount: Int,
-            val quads: FloatArray, val quadCount: Int,
-        ) : Pending
-    }
-    private var pending: Pending? = null
+    private data class PendingOutline(
+        val curves: FloatArray, val curveCount: Int,
+        val dstX: Float, val dstY: Float, val dstW: Float, val dstH: Float,
+    )
+    private var pending: PendingOutline? = null
 
     private var scrollY = 0f
     private var maxScrollY = 0f
@@ -94,17 +90,11 @@ class VulkanCanvasView @JvmOverloads constructor(
         }
     }
 
-    fun setTestGlyph(alpha: ByteArray, w: Int, h: Int, spread: Int) {
-        pending = Pending.Glyph(alpha, w, h, spread)
-        renderHandler.post { if (surfaceReady.get()) applyPending() }
-    }
-
-    fun setAyahAtlas(
-        alpha: ByteArray, w: Int, h: Int, spread: Int,
-        cells: IntArray, cellCount: Int,
-        quads: FloatArray, quadCount: Int,
+    fun setOutlineGlyph(
+        curves: FloatArray, curveCount: Int,
+        dstX: Float, dstY: Float, dstW: Float, dstH: Float,
     ) {
-        pending = Pending.Ayah(alpha, w, h, spread, cells, cellCount, quads, quadCount)
+        pending = PendingOutline(curves, curveCount, dstX, dstY, dstW, dstH)
         renderHandler.post { if (surfaceReady.get()) applyPending() }
     }
 
@@ -169,21 +159,11 @@ class VulkanCanvasView @JvmOverloads constructor(
     }
 
     private fun applyPending() {
-        when (val p = pending) {
-            is Pending.Glyph -> {
-                val ok = renderer.uploadGlyphAlpha(p.alpha, p.w, p.h, p.spread)
-                Log.i(TAG, "uploadGlyphAlpha ok=$ok")
-            }
-            is Pending.Ayah -> {
-                val ok = renderer.uploadAyahAtlas(
-                    p.alpha, p.w, p.h, p.spread,
-                    p.cells, p.cellCount,
-                    p.quads, p.quadCount,
-                )
-                Log.i(TAG, "uploadAyahAtlas ok=$ok cells=${p.cellCount} quads=${p.quadCount}")
-            }
-            null -> Unit
-        }
+        val p = pending ?: return
+        val ok = renderer.uploadOutlineGlyph(
+            p.curves, p.curveCount, p.dstX, p.dstY, p.dstW, p.dstH,
+        )
+        Log.i(TAG, "uploadOutlineGlyph ok=$ok curves=${p.curveCount}")
     }
 
     fun release() {

@@ -35,10 +35,11 @@ endfunction()
 
 add_shader(vert textured.vert kTexturedVertSpv)
 add_shader(frag textured.frag kTexturedFragSpv)
+add_shader(vert outline.vert kOutlineVertSpv)
+add_shader(frag outline.frag kOutlineFragSpv)
 
 add_library(baqarah_vk SHARED
     vk_renderer.cpp
-    sdf_gen.cpp
     jni_bridge.cpp
     ${SHADER_HEADERS}
 )
