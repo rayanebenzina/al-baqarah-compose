@@ -23,11 +23,17 @@ class VulkanCanvasView @JvmOverloads constructor(
     private val running = AtomicBoolean(false)
     private lateinit var renderHandler: android.os.Handler
 
-    private data class PendingOutline(
-        val curves: FloatArray, val curveCount: Int,
-        val dstX: Float, val dstY: Float, val dstW: Float, val dstH: Float,
-    )
-    private var pending: PendingOutline? = null
+    private sealed interface Pending {
+        data class Curves(
+            val curves: FloatArray, val curveCount: Int,
+            val dstX: Float, val dstY: Float, val dstW: Float, val dstH: Float,
+        ) : Pending
+        data class Ttf(
+            val ttfBytes: ByteArray, val codepoint: Int,
+            val dstX: Float, val dstY: Float, val dstW: Float, val dstH: Float,
+        ) : Pending
+    }
+    private var pending: Pending? = null
 
     private var scrollY = 0f
     private var maxScrollY = 0f
@@ -94,7 +100,15 @@ class VulkanCanvasView @JvmOverloads constructor(
         curves: FloatArray, curveCount: Int,
         dstX: Float, dstY: Float, dstW: Float, dstH: Float,
     ) {
-        pending = PendingOutline(curves, curveCount, dstX, dstY, dstW, dstH)
+        pending = Pending.Curves(curves, curveCount, dstX, dstY, dstW, dstH)
+        renderHandler.post { if (surfaceReady.get()) applyPending() }
+    }
+
+    fun setOutlineFromTtf(
+        ttfBytes: ByteArray, codepoint: Int,
+        dstX: Float, dstY: Float, dstW: Float, dstH: Float,
+    ) {
+        pending = Pending.Ttf(ttfBytes, codepoint, dstX, dstY, dstW, dstH)
         renderHandler.post { if (surfaceReady.get()) applyPending() }
     }
 
@@ -159,11 +173,21 @@ class VulkanCanvasView @JvmOverloads constructor(
     }
 
     private fun applyPending() {
-        val p = pending ?: return
-        val ok = renderer.uploadOutlineGlyph(
-            p.curves, p.curveCount, p.dstX, p.dstY, p.dstW, p.dstH,
-        )
-        Log.i(TAG, "uploadOutlineGlyph ok=$ok curves=${p.curveCount}")
+        when (val p = pending) {
+            is Pending.Curves -> {
+                val ok = renderer.uploadOutlineGlyph(
+                    p.curves, p.curveCount, p.dstX, p.dstY, p.dstW, p.dstH,
+                )
+                Log.i(TAG, "uploadOutlineGlyph ok=$ok curves=${p.curveCount}")
+            }
+            is Pending.Ttf -> {
+                val ok = renderer.uploadOutlineFromTtf(
+                    p.ttfBytes, p.codepoint, p.dstX, p.dstY, p.dstW, p.dstH,
+                )
+                Log.i(TAG, "uploadOutlineFromTtf ok=$ok cp=U+${p.codepoint.toString(16)}")
+            }
+            null -> Unit
+        }
     }
 
     fun release() {

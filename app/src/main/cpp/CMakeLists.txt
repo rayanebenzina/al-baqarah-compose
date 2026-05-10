@@ -40,6 +40,8 @@ add_shader(frag outline.frag kOutlineFragSpv)
 
 add_library(baqarah_vk SHARED
     vk_renderer.cpp
+    stb_truetype_impl.cpp
+    glyph_extractor.cpp
     jni_bridge.cpp
     ${SHADER_HEADERS}
 )

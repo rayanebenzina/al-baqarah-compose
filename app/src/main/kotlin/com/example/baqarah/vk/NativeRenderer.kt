@@ -31,6 +31,12 @@ class NativeRenderer {
         dstX: Float, dstY: Float, dstW: Float, dstH: Float,
     ): Boolean = nUploadOutlineGlyph(handle, curves, curveCount, dstX, dstY, dstW, dstH)
 
+    /** Extract a glyph outline from a TTF (using stb_truetype) and upload. */
+    fun uploadOutlineFromTtf(
+        ttfBytes: ByteArray, codepoint: Int,
+        dstX: Float, dstY: Float, dstW: Float, dstH: Float,
+    ): Boolean = nUploadOutlineFromTtf(handle, ttfBytes, codepoint, dstX, dstY, dstW, dstH)
+
     fun release() {
         if (handle != 0L) {
             nDestroy(handle)
@@ -46,6 +52,10 @@ class NativeRenderer {
     private external fun nSetScrollY(handle: Long, y: Float)
     private external fun nUploadOutlineGlyph(
         handle: Long, curves: FloatArray, curveCount: Int,
+        dstX: Float, dstY: Float, dstW: Float, dstH: Float,
+    ): Boolean
+    private external fun nUploadOutlineFromTtf(
+        handle: Long, ttfBytes: ByteArray, codepoint: Int,
         dstX: Float, dstY: Float, dstW: Float, dstH: Float,
     ): Boolean
 }

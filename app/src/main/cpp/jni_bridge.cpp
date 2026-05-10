@@ -3,8 +3,10 @@
 #include <android/native_window_jni.h>
 #include <jni.h>
 
+#include <cstdio>
 #include <vector>
 
+#include "glyph_extractor.h"
 #include "vk_renderer.h"
 
 #define LOG_TAG "BaqarahVkJNI"
@@ -57,6 +59,42 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_example_baqarah_vk_NativeRenderer_nSetScrollY(JNIEnv*, jobject, jlong handle, jfloat y) {
     auto* r = asRenderer(handle);
     if (r) r->setScrollY(y);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_baqarah_vk_NativeRenderer_nUploadOutlineFromTtf(
+    JNIEnv* env, jobject, jlong handle,
+    jbyteArray ttfBytes, jint codepoint,
+    jfloat dstX, jfloat dstY, jfloat dstW, jfloat dstH) {
+    auto* r = asRenderer(handle);
+    if (!r || !ttfBytes) return JNI_FALSE;
+
+    const jsize ttfSize = env->GetArrayLength(ttfBytes);
+    if (ttfSize <= 0) return JNI_FALSE;
+    std::vector<uint8_t> ttf((size_t)ttfSize);
+    env->GetByteArrayRegion(ttfBytes, 0, ttfSize, reinterpret_cast<jbyte*>(ttf.data()));
+
+    baqarah::GlyphOutline g;
+    if (!baqarah::extractGlyphOutline(ttf.data(), ttfSize, codepoint, g)) {
+        return JNI_FALSE;
+    }
+
+    const float dx = (float)(g.bboxMaxX - g.bboxMinX);
+    const float dy = (float)(g.bboxMaxY - g.bboxMinY);
+    if (dx <= 0.0f || dy <= 0.0f) return JNI_FALSE;
+
+    // Normalize outline to UV space [0, 1]^2 with Y flipped (TTF font units
+    // are Y-up; our quads have Y-down UV). Even-odd fill is winding-agnostic
+    // so the flip doesn't change which side is inside.
+    std::vector<float> norm(g.curves.size());
+    for (size_t i = 0; i < g.curves.size(); i += 2) {
+        norm[i + 0] = (g.curves[i + 0] - (float)g.bboxMinX) / dx;
+        norm[i + 1] = ((float)g.bboxMaxY - g.curves[i + 1]) / dy;
+    }
+
+    return r->setOutlineGlyph(norm.data(), g.curveCount, dstX, dstY, dstW, dstH)
+               ? JNI_TRUE
+               : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
