@@ -1,8 +1,4 @@
-package com.example.baqarah.ui
-
-import com.example.baqarah.data.GlyphAtlas
-import com.example.baqarah.data.GlyphRef
-import com.example.baqarah.data.Verse
+package com.example.baqarah.data
 
 class GlyphQuad(
     val atlasIndex: Int,

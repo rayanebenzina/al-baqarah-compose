@@ -22,57 +22,96 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.baqarah.R
 import com.example.baqarah.data.GlyphAtlas
+import com.example.baqarah.data.LayoutPlan
 import com.example.baqarah.data.Verse
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 private const val USE_V5 = true
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BaqarahScreen(
     viewModel: BaqarahViewModel = viewModel(factory = BaqarahViewModel.Factory),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val fontSize by viewModel.fontSize.collectAsStateWithLifecycle()
+    var showSettings by remember { mutableStateOf(false) }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-        contentAlignment = Alignment.Center,
-    ) {
-        when (val s = state) {
-            is BaqarahUiState.Loading -> CircularProgressIndicator()
-            is BaqarahUiState.Error -> Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(s.message, color = MaterialTheme.colorScheme.error)
-                Button(onClick = { viewModel.load() }) { Text("Retry") }
-            }
-            is BaqarahUiState.Ready -> VerseList(
-                verses = s.verses,
-                typefaces = s.typefaces,
-                atlas = s.atlas,
-                fontSizePx = s.fontSizePx,
-                prebuiltPlans = s.prebuiltPlans,
-                prebuiltWidthPx = s.prebuiltWidthPx,
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = { Text(stringResource(R.string.title)) },
+                actions = {
+                    IconButton(onClick = { showSettings = true }) {
+                        Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                    }
+                },
             )
+        },
+    ) { padding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .background(MaterialTheme.colorScheme.background),
+            contentAlignment = Alignment.Center,
+        ) {
+            when (val s = state) {
+                is BaqarahUiState.Loading -> CircularProgressIndicator()
+                is BaqarahUiState.Error -> Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(s.message, color = MaterialTheme.colorScheme.error)
+                    Button(onClick = { viewModel.reload() }) { Text("Retry") }
+                }
+                is BaqarahUiState.Ready -> VerseList(
+                    verses = s.verses,
+                    typefaces = s.typefaces,
+                    atlas = s.atlas,
+                    fontSizePx = s.fontSizePx,
+                    prebuiltPlans = s.prebuiltPlans,
+                    prebuiltWidthPx = s.prebuiltWidthPx,
+                )
+            }
         }
+    }
+
+    if (showSettings) {
+        SettingsSheet(
+            currentFontSize = fontSize,
+            onFontSizeChange = { viewModel.setFontSize(it) },
+            onDismiss = { showSettings = false },
+        )
     }
 }
 

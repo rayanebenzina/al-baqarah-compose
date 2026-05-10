@@ -15,7 +15,9 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.example.baqarah.data.GlyphAtlas
+import com.example.baqarah.data.LayoutPlan
 import com.example.baqarah.data.Verse
+import com.example.baqarah.data.buildPlan
 
 @Composable
 fun V5AyahText(
