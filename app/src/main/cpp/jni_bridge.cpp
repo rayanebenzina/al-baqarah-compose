@@ -54,6 +54,12 @@ Java_com_example_baqarah_vk_NativeRenderer_nDrawFrame(JNIEnv*, jobject, jlong ha
     return r->drawFrame() ? JNI_TRUE : JNI_FALSE;
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_baqarah_vk_NativeRenderer_nSetScrollY(JNIEnv*, jobject, jlong handle, jfloat y) {
+    auto* r = asRenderer(handle);
+    if (r) r->setScrollY(y);
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_example_baqarah_vk_NativeRenderer_nUploadAyahAtlas(
     JNIEnv* env, jobject, jlong handle, jbyteArray alpha, jint w, jint h, jint spread,

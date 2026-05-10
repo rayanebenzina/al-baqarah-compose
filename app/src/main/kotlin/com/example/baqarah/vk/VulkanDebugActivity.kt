@@ -45,23 +45,24 @@ class VulkanDebugActivity : Activity() {
 
         return scope.launch {
             try {
-                val verse = withContext(Dispatchers.IO) {
-                    app.ayahCache.loadVerses(1)?.firstOrNull()
-                        ?: app.quranRepository.versesByChapter(1).also {
-                            app.ayahCache.saveVerses(1, it)
-                        }.first()
+                val verses = withContext(Dispatchers.IO) {
+                    (app.ayahCache.loadVerses(SURAH)
+                        ?: app.quranRepository.versesByChapter(SURAH).also {
+                            app.ayahCache.saveVerses(SURAH, it)
+                        })
+                        .take(VERSE_COUNT)
                 }
-                val typefaces = loadTypefaces(app, verse)
+                val typefaces = loadTypefaces(app, verses)
                 val result = withContext(Dispatchers.Default) {
                     AyahSdfBuilder().build(
-                        verse = verse,
+                        verses = verses,
                         typefaces = typefaces,
-                        fontSizePx = 110f,
+                        fontSizePx = 96f,
                         screenWidthPx = displayWidth,
                         padding = 12,
                     )
                 }
-                Log.i(TAG, "ayah built: atlas=${result.atlasW}x${result.atlasH} quads=${result.quadCount} h=${result.totalHeightPx}")
+                Log.i(TAG, "surah built: atlas=${result.atlasW}x${result.atlasH} quads=${result.quadCount} h=${result.totalHeightPx}")
                 v.setAyahAtlas(
                     alpha = result.atlasAlpha,
                     w = result.atlasW,
@@ -70,14 +71,15 @@ class VulkanDebugActivity : Activity() {
                     quads = result.quads,
                     quadCount = result.quadCount,
                 )
+                v.setContentHeight(result.totalHeightPx)
             } catch (t: Throwable) {
-                Log.e(TAG, "ayah load failed", t)
+                Log.e(TAG, "surah load failed", t)
             }
         }
     }
 
-    private suspend fun loadTypefaces(app: BaqarahApp, verse: Verse): Map<Int, Typeface> {
-        val pages = verse.words.map { it.pageNumber }.toSet()
+    private suspend fun loadTypefaces(app: BaqarahApp, verses: List<Verse>): Map<Int, Typeface> {
+        val pages = verses.flatMap { v -> v.words.map { it.pageNumber } }.toSet()
         return withContext(Dispatchers.IO) {
             pages.map { p -> async { p to app.fontRepository.typefaceForPage(p) } }
                 .awaitAll()
@@ -87,5 +89,7 @@ class VulkanDebugActivity : Activity() {
 
     companion object {
         private const val TAG = "BaqarahVkDebug"
+        private const val SURAH = 2  // Al-Baqarah
+        private const val VERSE_COUNT = 10
     }
 }

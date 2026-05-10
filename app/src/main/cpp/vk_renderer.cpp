@@ -715,7 +715,7 @@ bool VkRenderer::createPipeline() {
     VkPushConstantRange pc{};
     pc.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pc.offset = 0;
-    pc.size = sizeof(float) * 2;
+    pc.size = sizeof(float) * 4;  // viewport(2) + scrollY + padding
 
     VkPipelineLayoutCreateInfo pli{};
     pli.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1010,9 +1010,13 @@ void VkRenderer::recordCommandBuffer(uint32_t imageIndex) {
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_, 0, 1,
                             &descSet_, 0, nullptr);
 
-    float viewport[2] = {(float)scExtent_.width, (float)scExtent_.height};
-    vkCmdPushConstants(cb, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(viewport),
-                       viewport);
+    float pc[4] = {
+        (float)scExtent_.width,
+        (float)scExtent_.height,
+        scrollY_.load(std::memory_order_relaxed),
+        0.0f,
+    };
+    vkCmdPushConstants(cb, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), pc);
 
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cb, 0, 1, &vbuf_, &offset);

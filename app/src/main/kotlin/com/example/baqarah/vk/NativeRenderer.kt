@@ -25,6 +25,8 @@ class NativeRenderer {
         quads: FloatArray, quadCount: Int,
     ): Boolean = nUploadAyahAtlas(handle, alpha, w, h, spread, quads, quadCount)
 
+    fun setScrollY(y: Float) = nSetScrollY(handle, y)
+
     fun release() {
         if (handle != 0L) {
             nDestroy(handle)
@@ -42,4 +44,5 @@ class NativeRenderer {
         handle: Long, alpha: ByteArray, w: Int, h: Int, spread: Int,
         quads: FloatArray, quadCount: Int,
     ): Boolean
+    private external fun nSetScrollY(handle: Long, y: Float)
 }

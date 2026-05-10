@@ -28,6 +28,22 @@ class AyahSdfBuilder {
         fontSizePx: Float,
         screenWidthPx: Float,
         padding: Int = 12,
+    ): Result = build(
+        verses = listOf(verse),
+        typefaces = typefaces,
+        fontSizePx = fontSizePx,
+        screenWidthPx = screenWidthPx,
+        padding = padding,
+    )
+
+    fun build(
+        verses: List<Verse>,
+        typefaces: Map<Int, Typeface>,
+        fontSizePx: Float,
+        screenWidthPx: Float,
+        startTopPx: Float = 24f,
+        ayahSpacingPx: Float = 28f,
+        padding: Int = 12,
     ): Result {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             isSubpixelText = true
@@ -36,37 +52,39 @@ class AyahSdfBuilder {
         }
 
         val unique = LinkedHashMap<Long, Pending>()
-        for (word in verse.words) {
-            val code = word.codeV2 ?: continue
-            val tf = typefaces[word.pageNumber] ?: continue
-            paint.typeface = tf
-            var i = 0
-            while (i < code.length) {
-                val cp = code.codePointAt(i)
-                val key = (word.pageNumber.toLong() shl 32) or cp.toLong()
-                if (key !in unique) {
-                    val text = String(Character.toChars(cp))
-                    val bounds = Rect()
-                    paint.getTextBounds(text, 0, text.length, bounds)
-                    val advance = paint.measureText(text)
-                    val w = bounds.width() + 2 * padding
-                    val h = bounds.height() + 2 * padding
-                    if (w > 0 && h > 0) {
-                        unique[key] = Pending(
-                            pageNumber = word.pageNumber,
-                            codepoint = cp,
-                            typeface = tf,
-                            text = text,
-                            w = w, h = h,
-                            drawOffsetX = (-bounds.left + padding).toFloat(),
-                            drawOffsetY = (-bounds.top + padding).toFloat(),
-                            advance = advance,
-                            originX = (bounds.left - padding).toFloat(),
-                            originY = (bounds.top - padding).toFloat(),
-                        )
+        for (verse in verses) {
+            for (word in verse.words) {
+                val code = word.codeV2 ?: continue
+                val tf = typefaces[word.pageNumber] ?: continue
+                paint.typeface = tf
+                var i = 0
+                while (i < code.length) {
+                    val cp = code.codePointAt(i)
+                    val key = (word.pageNumber.toLong() shl 32) or cp.toLong()
+                    if (key !in unique) {
+                        val text = String(Character.toChars(cp))
+                        val bounds = Rect()
+                        paint.getTextBounds(text, 0, text.length, bounds)
+                        val advance = paint.measureText(text)
+                        val w = bounds.width() + 2 * padding
+                        val h = bounds.height() + 2 * padding
+                        if (w > 0 && h > 0) {
+                            unique[key] = Pending(
+                                pageNumber = word.pageNumber,
+                                codepoint = cp,
+                                typeface = tf,
+                                text = text,
+                                w = w, h = h,
+                                drawOffsetX = (-bounds.left + padding).toFloat(),
+                                drawOffsetY = (-bounds.top + padding).toFloat(),
+                                advance = advance,
+                                originX = (bounds.left - padding).toFloat(),
+                                originY = (bounds.top - padding).toFloat(),
+                            )
+                        }
                     }
+                    i += Character.charCount(cp)
                 }
-                i += Character.charCount(cp)
             }
         }
 
@@ -110,47 +128,52 @@ class AyahSdfBuilder {
         val space = fontSizePx * 0.18f
         val lineHeight = fontSizePx * 1.6f
         val ascent = fontSizePx * 1.0f
-        var lineX = screenWidthPx
-        var baselineY = ascent
-        val quadBuf = ArrayList<Float>(verse.words.size * 8)
+        val quadBuf = ArrayList<Float>(verses.sumOf { it.words.size } * 8)
         var quadCount = 0
+        var contentY = startTopPx
 
-        for (word in verse.words) {
-            val code = word.codeV2 ?: continue
-            val refs = ArrayList<Pending>()
-            var i = 0
-            while (i < code.length) {
-                val cp = code.codePointAt(i)
-                val key = (word.pageNumber.toLong() shl 32) or cp.toLong()
-                unique[key]?.let { refs.add(it) }
-                i += Character.charCount(cp)
+        for (verse in verses) {
+            var lineX = screenWidthPx
+            var baselineY = contentY + ascent
+            for (word in verse.words) {
+                val code = word.codeV2 ?: continue
+                val refs = ArrayList<Pending>()
+                var i = 0
+                while (i < code.length) {
+                    val cp = code.codePointAt(i)
+                    val key = (word.pageNumber.toLong() shl 32) or cp.toLong()
+                    unique[key]?.let { refs.add(it) }
+                    i += Character.charCount(cp)
+                }
+                if (refs.isEmpty()) continue
+                val wordAdvance = refs.sumOf { it.advance.toDouble() }.toFloat()
+                if (lineX < screenWidthPx && lineX - wordAdvance < 0f) {
+                    baselineY += lineHeight
+                    lineX = screenWidthPx
+                }
+                var cursor = lineX
+                for (g in refs) {
+                    val glyphLeft = cursor - g.advance
+                    val dstX = glyphLeft + g.originX
+                    val dstY = baselineY + g.originY
+                    val key = (g.pageNumber.toLong() shl 32) or g.codepoint.toLong()
+                    val pos = placements[key] ?: continue
+                    val sx = pos[0]; val sy = pos[1]
+                    val u0 = sx.toFloat() / atlasW
+                    val v0 = sy.toFloat() / atlasH
+                    val u1 = (sx + g.w).toFloat() / atlasW
+                    val v1 = (sy + g.h).toFloat() / atlasH
+                    quadBuf.add(dstX); quadBuf.add(dstY)
+                    quadBuf.add(g.w.toFloat()); quadBuf.add(g.h.toFloat())
+                    quadBuf.add(u0); quadBuf.add(v0)
+                    quadBuf.add(u1); quadBuf.add(v1)
+                    quadCount++
+                    cursor = glyphLeft
+                }
+                lineX = cursor - space
             }
-            if (refs.isEmpty()) continue
-            val wordAdvance = refs.sumOf { it.advance.toDouble() }.toFloat()
-            if (lineX < screenWidthPx && lineX - wordAdvance < 0f) {
-                baselineY += lineHeight
-                lineX = screenWidthPx
-            }
-            var cursor = lineX
-            for (g in refs) {
-                val glyphLeft = cursor - g.advance
-                val dstX = glyphLeft + g.originX
-                val dstY = baselineY + g.originY
-                val key = (g.pageNumber.toLong() shl 32) or g.codepoint.toLong()
-                val pos = placements[key] ?: continue
-                val sx = pos[0]; val sy = pos[1]
-                val u0 = sx.toFloat() / atlasW
-                val v0 = sy.toFloat() / atlasH
-                val u1 = (sx + g.w).toFloat() / atlasW
-                val v1 = (sy + g.h).toFloat() / atlasH
-                quadBuf.add(dstX); quadBuf.add(dstY)
-                quadBuf.add(g.w.toFloat()); quadBuf.add(g.h.toFloat())
-                quadBuf.add(u0); quadBuf.add(v0)
-                quadBuf.add(u1); quadBuf.add(v1)
-                quadCount++
-                cursor = glyphLeft
-            }
-            lineX = cursor - space
+            // baselineY is at the last rendered baseline; advance past descent + spacing.
+            contentY = baselineY + (lineHeight - ascent) + ayahSpacingPx
         }
 
         val pixels = IntArray(atlasW * atlasH)
@@ -165,7 +188,7 @@ class AyahSdfBuilder {
             atlasH = atlasH,
             quads = quadBuf.toFloatArray(),
             quadCount = quadCount,
-            totalHeightPx = baselineY + (lineHeight - ascent),
+            totalHeightPx = contentY,
         )
     }
 

@@ -3,6 +3,7 @@
 #include <android/native_window.h>
 #include <vulkan/vulkan.h>
 
+#include <atomic>
 #include <cstdint>
 #include <vector>
 
@@ -29,6 +30,8 @@ class VkRenderer {
     // [dstX, dstY, dstW, dstH, u0, v0, u1, v1].
     bool setAyahAtlas(const uint8_t* sdfPixels, int w, int h,
                       const float* quads, int quadCount);
+
+    void setScrollY(float y) { scrollY_ = y; }
 
     bool valid() const { return device_ != VK_NULL_HANDLE && swapchain_ != VK_NULL_HANDLE; }
 
@@ -108,6 +111,8 @@ class VkRenderer {
     float clearR_ = 0.02f;
     float clearG_ = 0.05f;
     float clearB_ = 0.04f;
+
+    std::atomic<float> scrollY_{0.0f};
 };
 
 }  // namespace baqarah
