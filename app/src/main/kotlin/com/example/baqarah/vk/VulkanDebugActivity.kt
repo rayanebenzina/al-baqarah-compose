@@ -1,16 +1,26 @@
 package com.example.baqarah.vk
 
 import android.app.Activity
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
+import android.graphics.Typeface
 import android.os.Bundle
+import android.util.Log
 import android.view.WindowManager
+import com.example.baqarah.BaqarahApp
+import com.example.baqarah.data.Verse
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class VulkanDebugActivity : Activity() {
 
     private var view: VulkanCanvasView? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -19,44 +29,63 @@ class VulkanDebugActivity : Activity() {
         view = v
         setContentView(v)
 
-        val (alpha, w, h) = renderTestGlyphAlpha("A", textPx = 200f, padding = 24)
-        v.setTestGlyph(alpha, w, h, spread = 12)
+        loadAndUploadAyah(v)
     }
 
     override fun onDestroy() {
+        scope.cancel()
         view?.release()
         view = null
         super.onDestroy()
     }
 
-    private fun renderTestGlyphAlpha(
-        text: String,
-        textPx: Float,
-        padding: Int,
-    ): Triple<ByteArray, Int, Int> {
-        val paint = Paint().apply {
-            color = Color.WHITE
-            isAntiAlias = true
-            textSize = textPx
-            textAlign = Paint.Align.CENTER
-        }
-        val fm = paint.fontMetrics
-        val textHeight = (fm.descent - fm.ascent).toInt() + 1
-        val textWidth = paint.measureText(text).toInt() + 1
-        val w = textWidth + 2 * padding
-        val h = textHeight + 2 * padding
-        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp)
-        val baselineY = padding - fm.ascent
-        canvas.drawText(text, w / 2f, baselineY, paint)
+    private fun loadAndUploadAyah(v: VulkanCanvasView): Job {
+        val app = application as BaqarahApp
+        val displayWidth = resources.displayMetrics.widthPixels.toFloat()
 
-        val px = IntArray(w * h)
-        bmp.getPixels(px, 0, w, 0, 0, w, h)
-        val alpha = ByteArray(w * h)
-        for (i in 0 until w * h) {
-            alpha[i] = ((px[i] ushr 24) and 0xFF).toByte()
+        return scope.launch {
+            try {
+                val verse = withContext(Dispatchers.IO) {
+                    app.ayahCache.loadVerses(1)?.firstOrNull()
+                        ?: app.quranRepository.versesByChapter(1).also {
+                            app.ayahCache.saveVerses(1, it)
+                        }.first()
+                }
+                val typefaces = loadTypefaces(app, verse)
+                val result = withContext(Dispatchers.Default) {
+                    AyahSdfBuilder().build(
+                        verse = verse,
+                        typefaces = typefaces,
+                        fontSizePx = 110f,
+                        screenWidthPx = displayWidth,
+                        padding = 12,
+                    )
+                }
+                Log.i(TAG, "ayah built: atlas=${result.atlasW}x${result.atlasH} quads=${result.quadCount} h=${result.totalHeightPx}")
+                v.setAyahAtlas(
+                    alpha = result.atlasAlpha,
+                    w = result.atlasW,
+                    h = result.atlasH,
+                    spread = 8,
+                    quads = result.quads,
+                    quadCount = result.quadCount,
+                )
+            } catch (t: Throwable) {
+                Log.e(TAG, "ayah load failed", t)
+            }
         }
-        bmp.recycle()
-        return Triple(alpha, w, h)
+    }
+
+    private suspend fun loadTypefaces(app: BaqarahApp, verse: Verse): Map<Int, Typeface> {
+        val pages = verse.words.map { it.pageNumber }.toSet()
+        return withContext(Dispatchers.IO) {
+            pages.map { p -> async { p to app.fontRepository.typefaceForPage(p) } }
+                .awaitAll()
+                .toMap()
+        }
+    }
+
+    companion object {
+        private const val TAG = "BaqarahVkDebug"
     }
 }

@@ -20,6 +20,11 @@ class NativeRenderer {
     fun uploadGlyphAlpha(pixels: ByteArray, w: Int, h: Int, spread: Int): Boolean =
         nUploadGlyphAlpha(handle, pixels, w, h, spread)
 
+    fun uploadAyahAtlas(
+        alpha: ByteArray, w: Int, h: Int, spread: Int,
+        quads: FloatArray, quadCount: Int,
+    ): Boolean = nUploadAyahAtlas(handle, alpha, w, h, spread, quads, quadCount)
+
     fun release() {
         if (handle != 0L) {
             nDestroy(handle)
@@ -33,4 +38,8 @@ class NativeRenderer {
     private external fun nDetachSurface(handle: Long)
     private external fun nDrawFrame(handle: Long): Boolean
     private external fun nUploadGlyphAlpha(handle: Long, pixels: ByteArray, w: Int, h: Int, spread: Int): Boolean
+    private external fun nUploadAyahAtlas(
+        handle: Long, alpha: ByteArray, w: Int, h: Int, spread: Int,
+        quads: FloatArray, quadCount: Int,
+    ): Boolean
 }

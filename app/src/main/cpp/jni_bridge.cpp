@@ -55,6 +55,38 @@ Java_com_example_baqarah_vk_NativeRenderer_nDrawFrame(JNIEnv*, jobject, jlong ha
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_baqarah_vk_NativeRenderer_nUploadAyahAtlas(
+    JNIEnv* env, jobject, jlong handle, jbyteArray alpha, jint w, jint h, jint spread,
+    jfloatArray quads, jint quadCount) {
+    auto* r = asRenderer(handle);
+    if (!r || !alpha || !quads || w <= 0 || h <= 0 || spread <= 0 || quadCount < 0) {
+        return JNI_FALSE;
+    }
+    const jsize aLen = env->GetArrayLength(alpha);
+    if (aLen != w * h) {
+        LOGI("nUploadAyahAtlas: alpha size %d != %dx%d", (int)aLen, w, h);
+        return JNI_FALSE;
+    }
+    const jsize qLen = env->GetArrayLength(quads);
+    if (qLen != quadCount * 8) {
+        LOGI("nUploadAyahAtlas: quads size %d != %d*8", (int)qLen, quadCount);
+        return JNI_FALSE;
+    }
+
+    std::vector<uint8_t> alphaBuf((size_t)aLen);
+    env->GetByteArrayRegion(alpha, 0, aLen, reinterpret_cast<jbyte*>(alphaBuf.data()));
+
+    std::vector<uint8_t> sdfBuf((size_t)aLen);
+    baqarah::computeSdf(alphaBuf.data(), w, h, spread, /*threshold=*/128, sdfBuf.data());
+
+    std::vector<float> quadBuf((size_t)qLen);
+    env->GetFloatArrayRegion(quads, 0, qLen, quadBuf.data());
+
+    return r->setAyahAtlas(sdfBuf.data(), w, h, quadBuf.data(), quadCount) ? JNI_TRUE
+                                                                            : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
 Java_com_example_baqarah_vk_NativeRenderer_nUploadGlyphAlpha(
     JNIEnv* env, jobject, jlong handle, jbyteArray alpha, jint w, jint h, jint spread) {
     auto* r = asRenderer(handle);

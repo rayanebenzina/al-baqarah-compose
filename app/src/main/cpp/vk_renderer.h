@@ -24,6 +24,12 @@ class VkRenderer {
     // glyph-sized quad centered on the screen. Used for Phase 2b development.
     bool setGlyphSdf(const uint8_t* sdfPixels, int w, int h);
 
+    // Replace the SDF atlas with a packed ayah atlas and rebuild the vertex
+    // buffer from the supplied quad list. Each quad is 8 floats:
+    // [dstX, dstY, dstW, dstH, u0, v0, u1, v1].
+    bool setAyahAtlas(const uint8_t* sdfPixels, int w, int h,
+                      const float* quads, int quadCount);
+
     bool valid() const { return device_ != VK_NULL_HANDLE && swapchain_ != VK_NULL_HANDLE; }
 
    private:

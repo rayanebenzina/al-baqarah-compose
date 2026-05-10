@@ -854,6 +854,122 @@ bool VkRenderer::setGlyphSdf(const uint8_t* sdfPixels, int w, int h) {
     return true;
 }
 
+bool VkRenderer::setAyahAtlas(const uint8_t* sdfPixels, int w, int h,
+                              const float* quads, int quadCount) {
+    if (!valid()) return false;
+    vkDeviceWaitIdle(device_);
+
+    // Replace the SDF texture.
+    if (sdfView_ != VK_NULL_HANDLE) {
+        vkDestroyImageView(device_, sdfView_, nullptr);
+        sdfView_ = VK_NULL_HANDLE;
+    }
+    if (sdfImage_ != VK_NULL_HANDLE) {
+        vkDestroyImage(device_, sdfImage_, nullptr);
+        sdfImage_ = VK_NULL_HANDLE;
+    }
+    if (sdfMemory_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, sdfMemory_, nullptr);
+        sdfMemory_ = VK_NULL_HANDLE;
+    }
+    sdfW_ = (uint32_t)w;
+    sdfH_ = (uint32_t)h;
+
+    VkImageCreateInfo ci{};
+    ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ci.imageType = VK_IMAGE_TYPE_2D;
+    ci.format = VK_FORMAT_R8_UNORM;
+    ci.extent = {sdfW_, sdfH_, 1};
+    ci.mipLevels = 1;
+    ci.arrayLayers = 1;
+    ci.samples = VK_SAMPLE_COUNT_1_BIT;
+    ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ci.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VK_CHECK(vkCreateImage(device_, &ci, nullptr, &sdfImage_));
+
+    VkMemoryRequirements req;
+    vkGetImageMemoryRequirements(device_, sdfImage_, &req);
+    VkMemoryAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (ai.memoryTypeIndex == UINT32_MAX) return false;
+    VK_CHECK(vkAllocateMemory(device_, &ai, nullptr, &sdfMemory_));
+    VK_CHECK(vkBindImageMemory(device_, sdfImage_, sdfMemory_, 0));
+    if (!uploadImageR8(sdfImage_, sdfW_, sdfH_, sdfPixels)) return false;
+
+    VkImageViewCreateInfo vi{};
+    vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vi.image = sdfImage_;
+    vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vi.format = VK_FORMAT_R8_UNORM;
+    vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VK_CHECK(vkCreateImageView(device_, &vi, nullptr, &sdfView_));
+
+    VkDescriptorImageInfo ii{};
+    ii.sampler = sampler_;
+    ii.imageView = sdfView_;
+    ii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet wr{};
+    wr.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    wr.dstSet = descSet_;
+    wr.dstBinding = 0;
+    wr.descriptorCount = 1;
+    wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    wr.pImageInfo = &ii;
+    vkUpdateDescriptorSets(device_, 1, &wr, 0, nullptr);
+
+    // Expand quads into a 6-vert triangle list.
+    struct V { float x, y, u, v; };
+    std::vector<V> verts;
+    verts.reserve((size_t)quadCount * 6);
+    for (int i = 0; i < quadCount; ++i) {
+        const float* q = &quads[i * 8];
+        float x0 = q[0], y0 = q[1];
+        float x1 = q[0] + q[2], y1 = q[1] + q[3];
+        float u0 = q[4], v0 = q[5];
+        float u1 = q[6], v1 = q[7];
+        verts.push_back({x0, y0, u0, v0});
+        verts.push_back({x1, y0, u1, v0});
+        verts.push_back({x0, y1, u0, v1});
+        verts.push_back({x1, y0, u1, v0});
+        verts.push_back({x1, y1, u1, v1});
+        verts.push_back({x0, y1, u0, v1});
+    }
+
+    if (vbuf_ != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, vbuf_, nullptr);
+        vbuf_ = VK_NULL_HANDLE;
+    }
+    if (vbufMem_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, vbufMem_, nullptr);
+        vbufMem_ = VK_NULL_HANDLE;
+    }
+
+    VkDeviceSize bytes = verts.size() * sizeof(V);
+    if (bytes == 0) {
+        vertexCount_ = 0;
+        LOGI("setAyahAtlas: 0 quads — nothing to draw");
+        return true;
+    }
+    if (!createBuffer(bytes,
+                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                      vbuf_, vbufMem_)) {
+        return false;
+    }
+    void* mapped = nullptr;
+    vkMapMemory(device_, vbufMem_, 0, bytes, 0, &mapped);
+    std::memcpy(mapped, verts.data(), bytes);
+    vkUnmapMemory(device_, vbufMem_);
+    vertexCount_ = (uint32_t)verts.size();
+    LOGI("setAyahAtlas: atlas=%dx%d quads=%d verts=%u", w, h, quadCount, vertexCount_);
+    return true;
+}
+
 void VkRenderer::recordCommandBuffer(uint32_t imageIndex) {
     VkCommandBuffer cb = cmdBuffers_[frameSlot_];
     vkResetCommandBuffer(cb, 0);
