@@ -52,8 +52,9 @@ fun V5AyahText(
                 size = sizePx,
             ) {
                 for (q in plan.quads) {
+                    val img = atlas.page(q.atlasIndex) ?: continue
                     drawImage(
-                        image = atlas.page(q.atlasIndex),
+                        image = img,
                         srcOffset = IntOffset(q.srcX, q.srcY),
                         srcSize = IntSize(q.w, q.h),
                         dstOffset = IntOffset(q.dstX, q.dstY),

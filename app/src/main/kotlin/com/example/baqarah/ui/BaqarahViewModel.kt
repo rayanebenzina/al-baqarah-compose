@@ -1,7 +1,10 @@
 package com.example.baqarah.ui
 
 import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Typeface
+import androidx.compose.ui.graphics.asImageBitmap
 import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.util.Log
@@ -85,16 +88,30 @@ class BaqarahViewModel(
         val widthPx = estimateAyahWidthPx()
         val atlasDir = cache.atlasDir(targetFontSizePx)
 
-        val atlasJob = async(Dispatchers.IO) { GlyphAtlas.loadFrom(atlasDir) }
         val plansJob = async(Dispatchers.IO) { cache.loadPlans(targetFontSizePx, widthPx) }
         val versesJob = async(Dispatchers.IO) { cache.loadVerses() }
+        val indexJob = async(Dispatchers.IO) { GlyphAtlas.readIndex(atlasDir) }
+        val page0Job = async(Dispatchers.IO) {
+            val f = java.io.File(atlasDir, "atlas_0.png")
+            if (!f.exists() || f.length() == 0L) null
+            else BitmapFactory.decodeFile(
+                f.absolutePath,
+                BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.HARDWARE },
+            )?.asImageBitmap()
+        }
 
-        val cachedAtlas = atlasJob.await()
         val cachedPlans = plansJob.await()
         val verses = versesJob.await() ?: quran.alBaqarah().also { cache.saveVerses(it) }
+        val indexResult = indexJob.await()
+        val page0Image = page0Job.await()
 
-        val (atlas, typefaces) = if (cachedAtlas != null) {
-            cachedAtlas to emptyMap<Int, Typeface>()
+        val (atlas, typefaces) = if (indexResult != null) {
+            val (loaded, pngFiles) = indexResult
+            if (page0Image != null) loaded.installPage(0, page0Image)
+            val priorityPages = cachedPlans?.let { computePriorityPages(it, ayahLimit = 8) } ?: IntArray(0)
+            val needSync = priorityPages.filter { it != 0 || page0Image == null }.toIntArray()
+            GlyphAtlas.decodeProgressive(loaded, pngFiles, needSync, backgroundScope = viewModelScope)
+            loaded to emptyMap<Int, Typeface>()
         } else {
             val pages = verses.flatMap { v -> v.words.map { it.pageNumber } }.toSet()
             val tfs = pages.associateWith { fonts.typefaceForPage(it) }
@@ -109,6 +126,14 @@ class BaqarahViewModel(
         }.also { cache.savePlans(targetFontSizePx, widthPx, it) }
 
         BaqarahUiState.Ready(verses, typefaces, atlas, targetFontSizePx.toFloat(), plans, widthPx)
+    }
+
+    private fun computePriorityPages(plans: Map<Int, LayoutPlan>, ayahLimit: Int): IntArray {
+        val pages = HashSet<Int>()
+        plans.entries.sortedBy { it.key }.take(ayahLimit).forEach { (_, plan) ->
+            for (q in plan.quads) pages.add(q.atlasIndex)
+        }
+        return pages.toIntArray()
     }
 
     private suspend fun buildAtlas(

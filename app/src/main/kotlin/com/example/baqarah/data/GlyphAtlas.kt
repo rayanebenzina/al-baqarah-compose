@@ -6,11 +6,16 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Typeface
+import androidx.compose.runtime.MutableIntState
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.DataInputStream
@@ -45,14 +50,25 @@ class GlyphAtlas(private val pageSize: Int = 4096) {
     )
 
     private val refs = HashMap<Long, GlyphRef>()
-    private val pending = HashMap<Long, Pending>()
+    private val pending = LinkedHashMap<Long, Pending>()
     private val pages = ArrayList<Bitmap>()
-    private val finalizedImages = ArrayList<ImageBitmap>()
+    private val finalizedImages = ArrayList<ImageBitmap?>()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { isSubpixelText = true }
     private var sealed = false
+    private val versionState: MutableIntState = mutableIntStateOf(0)
 
     val pagesCount: Int get() = if (sealed) finalizedImages.size else pages.size
-    fun page(i: Int): ImageBitmap = finalizedImages[i]
+    fun page(i: Int): ImageBitmap? = finalizedImages.getOrNull(i)
+    val version: MutableIntState get() = versionState
+
+    @Synchronized
+    private fun setPage(i: Int, img: ImageBitmap) {
+        while (finalizedImages.size <= i) finalizedImages.add(null)
+        finalizedImages[i] = img
+        versionState.intValue++
+    }
+
+    fun installPage(i: Int, img: ImageBitmap) = setPage(i, img)
 
     @Synchronized
     fun add(page: Int, codepoint: Int, fontSizePx: Float, typeface: Typeface) {
@@ -98,9 +114,11 @@ class GlyphAtlas(private val pageSize: Int = 4096) {
         if (sealed) return
         sealed = true
 
-        val sorted = pending.values.sortedWith(
-            compareByDescending<Pending> { it.height }.thenByDescending { it.width }
-        )
+        // Insertion-order packing for spatial locality (early ayah glyphs land on
+        // early atlas pages — important for the lazy-loading priority window to
+        // actually be a subset). Drop in-bucket height-sort because glyph heights
+        // are nearly uniform after sorting; the locality win matters more.
+        val sorted = pending.values.toList()
 
         var skyline = Skyline(pageSize)
         var pageIndex = -1
@@ -166,6 +184,7 @@ class GlyphAtlas(private val pageSize: Int = 4096) {
             }
         }
         pages.clear()
+        versionState.intValue++
     }
 
     private fun writeIndexTo(file: File) {
@@ -272,18 +291,19 @@ class GlyphAtlas(private val pageSize: Int = 4096) {
             (codepoint.toLong() and 0xFFFFFFFFL)
 
     companion object {
-        private const val VERSION = 5
+        private const val VERSION = 6
         private const val FILE_INDEX = "glyph_index.bin"
 
         private fun atlasFileName(i: Int, ext: String = "png") = "atlas_$i.$ext"
 
-        suspend fun loadFrom(dir: File): GlyphAtlas? = coroutineScope {
+        /** Read just the glyph index (no PNG decode). Returns an atlas with empty pageStates. */
+        fun readIndex(dir: File): Pair<GlyphAtlas, List<File>>? {
             val indexFile = File(dir, FILE_INDEX)
-            if (!indexFile.exists()) return@coroutineScope null
+            if (!indexFile.exists()) return null
             val atlas = GlyphAtlas()
             DataInputStream(BufferedInputStream(indexFile.inputStream())).use { inp ->
-                val version = inp.readInt()
-                if (version != VERSION) return@coroutineScope null
+                val v = inp.readInt()
+                if (v != VERSION) return null
                 val count = inp.readInt()
                 repeat(count) {
                     val key = inp.readLong()
@@ -311,19 +331,46 @@ class GlyphAtlas(private val pageSize: Int = 4096) {
                 } ?: break
                 pngFiles.add(f); i++
             }
-            if (pngFiles.isEmpty()) return@coroutineScope null
+            if (pngFiles.isEmpty()) return null
+            for (idx in pngFiles.indices) atlas.finalizedImages.add(null)
+            atlas.sealed = true
+            return atlas to pngFiles
+        }
+
+        /** Block on priority page decode (parallel). Stream remaining in [backgroundScope]. */
+        suspend fun decodeProgressive(
+            atlas: GlyphAtlas,
+            pngFiles: List<File>,
+            priorityPageIndices: IntArray,
+            backgroundScope: CoroutineScope,
+        ) = coroutineScope {
             val opts = BitmapFactory.Options().apply {
                 inPreferredConfig = Bitmap.Config.HARDWARE
             }
-            val deferred = pngFiles.map { f ->
-                async(Dispatchers.IO) {
-                    BitmapFactory.decodeFile(f.absolutePath, opts)?.asImageBitmap()
+            val prioritySet = priorityPageIndices.toHashSet().filter { it in pngFiles.indices }.toHashSet()
+
+            if (prioritySet.isNotEmpty()) {
+                prioritySet.map { idx ->
+                    async(Dispatchers.IO) {
+                        BitmapFactory.decodeFile(pngFiles[idx].absolutePath, opts)?.let {
+                            atlas.setPage(idx, it.asImageBitmap())
+                        }
+                    }
+                }.awaitAll()
+            }
+
+            val remaining = pngFiles.indices.filter { it !in prioritySet && atlas.page(it) == null }
+            if (remaining.isNotEmpty()) {
+                backgroundScope.launch(Dispatchers.IO) {
+                    remaining.map { idx ->
+                        async {
+                            BitmapFactory.decodeFile(pngFiles[idx].absolutePath, opts)?.let {
+                                atlas.setPage(idx, it.asImageBitmap())
+                            }
+                        }
+                    }.awaitAll()
                 }
             }
-            val images = deferred.map { it.await() ?: return@coroutineScope null }
-            atlas.finalizedImages.addAll(images)
-            atlas.sealed = true
-            atlas
         }
     }
 }
