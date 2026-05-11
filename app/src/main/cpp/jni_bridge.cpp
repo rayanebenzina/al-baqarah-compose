@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <vector>
 
 #include "colr_parser.h"
@@ -144,10 +145,9 @@ bool initFontHandle(JNIEnv* env, jbyteArray ba, FontHandle& out) {
 //     cancels the inner hole — non-zero / even-odd both render them as
 //     filled either way.
 //
-// Corner radius, stroke width, and diamond size are kept circular even
-// when the frame is wide by scaling u and v independently from a single
-// pixel measurement (so a thin tall frame and a fat short frame both
-// produce visually correct round corners).
+// Stroke width and diamond size scale off the short dimension so the
+// stroke band stays visually balanced when the frame is much wider
+// than tall.
 void emitFrame(float dstX, float dstY, float dstW, float dstH,
                uint32_t color,
                std::vector<float>& allCurves,
@@ -157,20 +157,13 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
                std::vector<int>& curveIndicesArr,
                int& totalCurves,
                int& totalLayers) {
-    // Geometry is sized off the short dimension so corner curves stay
-    // visually circular when the frame is much wider than tall.
     const float minSide  = std::min(dstW, dstH);
-    const float cornerPx = minSide * 0.20f;
     const float strokePx = minSide * 0.06f;
     const float ornamentPx = minSide * 0.16f;
-    // Place diamonds *past* the inner rounded corner so they sit
-    // squarely inside the open interior, not on top of the stroke.
-    const float ornamentInsetPx = cornerPx + ornamentPx * 0.5f + strokePx * 0.5f;
+    // Diamonds sit just inside the stroke, in the open corner.
+    const float ornamentInsetPx = strokePx + ornamentPx * 0.75f;
 
-    const float rU  = cornerPx / dstW,  rV  = cornerPx / dstH;
     const float sU  = strokePx / dstW,  sV  = strokePx / dstH;
-    const float r2U = std::max(0.0f, rU - sU);
-    const float r2V = std::max(0.0f, rV - sV);
     const float dU  = ornamentPx / dstW, dV  = ornamentPx / dstH;
     const float diU = ornamentInsetPx / dstW, diV = ornamentInsetPx / dstH;
 
@@ -186,30 +179,18 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
         curve(x0, y0, (x0 + x1) * 0.5f, (y0 + y1) * 0.5f, x1, y1);
     };
 
-    // Outer rounded rect, CCW: bottom → BR → right → TR → top → TL →
-    // left → BL. Each corner is a single quadratic Bézier with the
-    // control point at the geometric corner (approximates a quarter
-    // circle to within a few percent — fine at this size).
-    line (rU,        0.0f,      1.0f - rU, 0.0f);
-    curve(1.0f - rU, 0.0f,      1.0f,      0.0f,      1.0f,      rV);
-    line (1.0f,      rV,        1.0f,      1.0f - rV);
-    curve(1.0f,      1.0f - rV, 1.0f,      1.0f,      1.0f - rU, 1.0f);
-    line (1.0f - rU, 1.0f,      rU,        1.0f);
-    curve(rU,        1.0f,      0.0f,      1.0f,      0.0f,      1.0f - rV);
-    line (0.0f,      1.0f - rV, 0.0f,      rV);
-    curve(0.0f,      rV,        0.0f,      0.0f,      rU,        0.0f);
+    // Outer rectangle, CCW: bottom → right → top → left.
+    line(0.0f, 0.0f, 1.0f, 0.0f);
+    line(1.0f, 0.0f, 1.0f, 1.0f);
+    line(1.0f, 1.0f, 0.0f, 1.0f);
+    line(0.0f, 1.0f, 0.0f, 0.0f);
 
-    // Inner rounded rect, CW (reversed): bottom←leftward, BL, left↑,
-    // TL, top→right, TR, right↓, BR. Offset by stroke; corner radius
-    // shrinks by the stroke so the band has uniform thickness.
-    line (1.0f - sU - r2U, sV,            sU + r2U,        sV);
-    curve(sU + r2U,        sV,            sU,              sV,              sU,              sV + r2V);
-    line (sU,              sV + r2V,      sU,              1.0f - sV - r2V);
-    curve(sU,              1.0f - sV - r2V, sU,            1.0f - sV,       sU + r2U,        1.0f - sV);
-    line (sU + r2U,        1.0f - sV,     1.0f - sU - r2U, 1.0f - sV);
-    curve(1.0f - sU - r2U, 1.0f - sV,     1.0f - sU,       1.0f - sV,       1.0f - sU,       1.0f - sV - r2V);
-    line (1.0f - sU,       1.0f - sV - r2V, 1.0f - sU,     sV + r2V);
-    curve(1.0f - sU,       sV + r2V,      1.0f - sU,       sV,              1.0f - sU - r2U, sV);
+    // Inner rectangle, CW (reversed). Offset by stroke on every side
+    // so the band has uniform thickness.
+    line(1.0f - sU, sV,        sU,        sV);
+    line(sU,        sV,        sU,        1.0f - sV);
+    line(sU,        1.0f - sV, 1.0f - sU, 1.0f - sV);
+    line(1.0f - sU, 1.0f - sV, 1.0f - sU, sV);
 
     // Four corner diamonds (small filled lozenges) inside the inner
     // rectangle. Path goes top → right → bottom → left.
@@ -343,11 +324,45 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
 
         // Line 0 in surah mode (when decorated) is centered, not RTL
         // right-aligned, so the surah-name plate sits in the middle of
-        // the frame we'll emit after the glyph(s).
+        // the frame we'll emit after the glyph(s). Center by the actual
+        // ink bbox (x0..x1) rather than the advance box — ornate title
+        // plates often have asymmetric side bearings, so advance-box
+        // centering leaves them visibly off.
         const bool centerThisLine = (firstLineDecorate && ln == 0);
-        float cursorX = centerThisLine
-                            ? (minX + maxX) * 0.5f + scaledWidthPx * 0.5f
-                            : maxX;
+        float cursorX;
+        if (centerThisLine) {
+            float inkLeft = std::numeric_limits<float>::infinity();
+            float inkRight = -std::numeric_limits<float>::infinity();
+            float probeX = 0.0f;  // synthetic origin
+            for (int i = lss[ln]; i < lss[ln + 1]; ++i) {
+                const int fi = fis[(size_t)i];
+                if (fi < 0 || fi >= numFonts) continue;
+                FontHandle& font = fonts[(size_t)fi];
+                const float scale = font.scaleFor1em * lineFs;
+                int gid = stbtt_FindGlyphIndex(&font.info, cps[(size_t)i]);
+                if (gid == 0) continue;
+                int advance = 0, lsb = 0;
+                stbtt_GetGlyphHMetrics(&font.info, gid, &advance, &lsb);
+                probeX -= (float)advance * scale;
+                int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+                stbtt_GetGlyphBox(&font.info, gid, &x0, &y0, &x1, &y1);
+                if (x1 > x0) {
+                    const float l = probeX + (float)x0 * scale;
+                    const float r = probeX + (float)x1 * scale;
+                    if (l < inkLeft)  inkLeft  = l;
+                    if (r > inkRight) inkRight = r;
+                }
+            }
+            const float frameCenterX = (minX + maxX) * 0.5f;
+            if (inkRight > inkLeft) {
+                const float inkCenterX = (inkLeft + inkRight) * 0.5f;
+                cursorX = frameCenterX - inkCenterX;  // shift so ink center = frame center
+            } else {
+                cursorX = frameCenterX + scaledWidthPx * 0.5f;
+            }
+        } else {
+            cursorX = maxX;
+        }
 
         for (int i = lss[ln]; i < lss[ln + 1]; ++i) {
             const int cp = cps[(size_t)i];
