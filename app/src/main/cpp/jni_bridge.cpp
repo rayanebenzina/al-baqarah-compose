@@ -276,7 +276,7 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
     // share the triple band above and emit two end medallions plus a
     // chain along the long edges, but the motifs differ — stars,
     // petals, sunburst rays, or interlaced girih shapes.
-    const int NUM_STYLES = 10;
+    const int NUM_STYLES = 13;
     const int style = ((unsigned)seed) % (unsigned)NUM_STYLES;
     LOGI("emitFrame: seed=%d style=%d", seed, style);
 
@@ -893,6 +893,172 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
                 petal(uPos, aVbot,  PI * 0.5f,
                       (minSide*0.040f)/dstW, (minSide*0.040f)/dstH,
                       (minSide*0.016f)/dstW, (minSide*0.016f)/dstH, false);
+            }
+        }
+    } else if (style == 10) {
+        // -------- Style 10: Paisley — curled teardrop with hooked tail --------
+        // A paisley/buta motif: a body with a long curled tail. Modeled
+        // as a closed path of two quadratic Béziers: an outer "tail
+        // hook" curve and an inner return curve. Tip = curl, base = body.
+        auto paisley = [&](float cU_, float cV_, float angle, float sizePx) {
+            const float dirU = cosf(angle), dirV = sinf(angle);
+            const float perpU = -sinf(angle), perpV = cosf(angle);
+            // base of body — near center
+            const float bU = cU_, bV = cV_;
+            // outer body apex (fat part)
+            const float bodyR = sizePx * 0.55f;
+            const float bodyU = cU_ + (dirU * sizePx * 0.5f + perpU * bodyR) / dstW;
+            const float bodyV = cV_ + (dirV * sizePx * 0.5f + perpV * bodyR) / dstH;
+            // tip (curls back toward center)
+            const float tipU = cU_ + (dirU * sizePx - perpU * sizePx * 0.05f) / dstW;
+            const float tipV = cV_ + (dirV * sizePx - perpV * sizePx * 0.05f) / dstH;
+            // inner control near base
+            const float innerU = cU_ + (dirU * sizePx * 0.4f - perpU * sizePx * 0.15f) / dstW;
+            const float innerV = cV_ + (dirV * sizePx * 0.4f - perpV * sizePx * 0.15f) / dstH;
+            // outer curve from base → body → tip
+            curve(bU, bV, bodyU, bodyV, tipU, tipV);
+            // inner curve tip → inner → base (closes the path)
+            curve(tipU, tipV, innerU, innerV, bU, bV);
+        };
+        auto paisleyMandala = [&](float c) {
+            // Outer ring of 8 paisleys, all curling counter-clockwise
+            const float sz1 = minSide * 0.36f;
+            for (int p = 0; p < 8; ++p) {
+                const float ang = (float)p * 2.0f * PI / 8.0f;
+                paisley(c, 0.5f, ang, sz1);
+            }
+            // Inner ring of 6 smaller paisleys, opposite curl (rotate -PI/6 phase)
+            const float sz2 = minSide * 0.17f;
+            for (int p = 0; p < 6; ++p) {
+                const float ang = PI / 6.0f + (float)p * 2.0f * PI / 6.0f;
+                paisley(c, 0.5f, ang, sz2);
+            }
+            // Center small flower
+            for (int p = 0; p < 5; ++p) {
+                const float ang = (float)p * 2.0f * PI / 5.0f;
+                petal(c, 0.5f, ang,
+                      (minSide*0.040f)/dstW, (minSide*0.040f)/dstH,
+                      (minSide*0.015f)/dstW, (minSide*0.015f)/dstH, false);
+            }
+        };
+        paisleyMandala(cU_left);
+        paisleyMandala(cU_right);
+        if (drawChain) {
+            // Chain: small paisleys alternating direction
+            const float aVtop = (bandPx + minSide * 0.045f + minSide * 0.008f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 9;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                const float dir = (k & 1) ? 1.0f : -1.0f;
+                paisley(uPos, aVtop, dir * PI * 0.5f, minSide * 0.045f);
+                paisley(uPos, aVbot, dir * -PI * 0.5f, minSide * 0.045f);
+            }
+        }
+    } else if (style == 11) {
+        // -------- Style 11: Wave / ripple — concentric wavy rings --------
+        // Each ring is a polystar with many points and a small in/out
+        // radius oscillation — looks like a circular sine wave.
+        auto wavyRing = [&](float c, float radiusPx, float amplitudePx,
+                              int waves, float phase, bool reverse) {
+            polystar(c, 0.5f,
+                     (radiusPx + amplitudePx) / dstW,
+                     (radiusPx + amplitudePx) / dstH,
+                     (radiusPx - amplitudePx) / dstW,
+                     (radiusPx - amplitudePx) / dstH,
+                     waves, phase, reverse);
+        };
+        auto ripple = [&](float c) {
+            // 5 concentric wavy rings, alternating phase for a quilted look
+            wavyRing(c, minSide * 0.34f, minSide * 0.025f, 20, 0.0f,       false);
+            wavyRing(c, minSide * 0.30f, minSide * 0.020f, 18, PI / 18.0f, true);
+            wavyRing(c, minSide * 0.24f, minSide * 0.025f, 16, 0.0f,       false);
+            wavyRing(c, minSide * 0.18f, minSide * 0.020f, 14, PI / 14.0f, true);
+            wavyRing(c, minSide * 0.12f, minSide * 0.025f, 12, 0.0f,       false);
+            // Center 6-petal flower
+            for (int p = 0; p < 6; ++p) {
+                const float ang = (float)p * 2.0f * PI / 6.0f;
+                petal(c, 0.5f, ang,
+                      (minSide*0.055f)/dstW, (minSide*0.055f)/dstH,
+                      (minSide*0.022f)/dstW, (minSide*0.022f)/dstH, false);
+            }
+            polystar(c, 0.5f, (minSide*0.015f)/dstW, (minSide*0.015f)/dstH,
+                     (minSide*0.011f)/dstW, (minSide*0.011f)/dstH, 8, 0.0f, false);
+        };
+        ripple(cU_left);
+        ripple(cU_right);
+        if (drawChain) {
+            // Chain: small wavy circles (rings drawn as a thin band)
+            const float aVtop = (bandPx + minSide * 0.030f + minSide * 0.012f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 11;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                polystar(uPos, aVtop,
+                         (minSide*0.030f)/dstW, (minSide*0.030f)/dstH,
+                         (minSide*0.022f)/dstW, (minSide*0.022f)/dstH,
+                         10, 0.0f, false);
+                polystar(uPos, aVbot,
+                         (minSide*0.030f)/dstW, (minSide*0.030f)/dstH,
+                         (minSide*0.022f)/dstW, (minSide*0.022f)/dstH,
+                         10, 0.0f, false);
+            }
+        }
+    } else if (style == 12) {
+        // -------- Style 12: Sunflower — fibonacci spiral packing --------
+        // Many small petals/seeds placed on a golden-angle spiral. The
+        // golden angle is ~137.508° = pi * (3 - sqrt(5)).
+        const float goldenAngle = 2.39996323f;  // pi * (3 - sqrt 5)
+        auto sunflower = [&](float c) {
+            const int SEEDS = 80;
+            const float maxR = minSide * 0.38f;
+            for (int i = 0; i < SEEDS; ++i) {
+                const float t = (float)i / (float)(SEEDS - 1);
+                const float r = sqrtf(t) * maxR;
+                const float ang = (float)i * goldenAngle;
+                const float uPos = c + (r * cosf(ang)) / dstW;
+                const float vPos = 0.5f + (r * sinf(ang)) / dstH;
+                // Each seed: small oriented petal pointing outward
+                const float petL = minSide * 0.030f + r * 0.05f;
+                const float petW = minSide * 0.011f;
+                petal(uPos, vPos, ang,
+                      petL/dstW, petL/dstH, petW/dstW, petW/dstH, false);
+            }
+            // Center cap so the densely packed spirals join a clean disc
+            polystar(c, 0.5f,
+                     (minSide*0.055f)/dstW, (minSide*0.055f)/dstH,
+                     (minSide*0.050f)/dstW, (minSide*0.050f)/dstH,
+                     16, 0.0f, false);
+            polystar(c, 0.5f,
+                     (minSide*0.025f)/dstW, (minSide*0.025f)/dstH,
+                     (minSide*0.020f)/dstW, (minSide*0.020f)/dstH,
+                     12, 0.0f, true);
+        };
+        sunflower(cU_left);
+        sunflower(cU_right);
+        if (drawChain) {
+            // Chain: mini sunflower seeds (small petals on a tiny golden spiral)
+            const float aVtop = (bandPx + minSide * 0.035f + minSide * 0.012f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 9;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                for (int i = 0; i < 6; ++i) {
+                    const float r = sqrtf((float)i / 5.0f) * minSide * 0.030f;
+                    const float ang = (float)i * goldenAngle;
+                    const float sU = uPos + (r * cosf(ang)) / dstW;
+                    const float sVt = aVtop + (r * sinf(ang)) / dstH;
+                    const float sVb = aVbot + (r * sinf(ang)) / dstH;
+                    petal(sU, sVt, ang,
+                          (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
+                          (minSide*0.006f)/dstW, (minSide*0.006f)/dstH, false);
+                    petal(sU, sVb, ang,
+                          (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
+                          (minSide*0.006f)/dstW, (minSide*0.006f)/dstH, false);
+                }
             }
         }
     }
