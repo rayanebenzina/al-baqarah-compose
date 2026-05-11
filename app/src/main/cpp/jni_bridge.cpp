@@ -276,7 +276,7 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
     // share the triple band above and emit two end medallions plus a
     // chain along the long edges, but the motifs differ — stars,
     // petals, sunburst rays, or interlaced girih shapes.
-    const int NUM_STYLES = 34;
+    const int NUM_STYLES = 35;
     const int style = ((unsigned)seed) % (unsigned)NUM_STYLES;
     LOGI("emitFrame: seed=%d style=%d", seed, style);
 
@@ -2566,6 +2566,70 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
                 }
             }
         }
+    } else if (style == 34) {
+        // -------- Style 34: Triple chained loops --------
+        // Three closed oval loops in a row across the title rect — small,
+        // large, small — drawn as thick ribbons. The centred surah-title
+        // glyph sits inside the middle loop. Adjacent loops kiss at a
+        // shared tangent point that's marked with a small 6-point star.
+        auto ovalLoop = [&](float centerU, float halfWPx, float halfHPx, float thicknessPx) {
+            const int SEG = 96;
+            float prevUO = 0, prevVO = 0, prevUI = 0, prevVI = 0;
+            for (int i = 0; i <= SEG; ++i) {
+                const float t = (float)i * 2.0f * PI / (float)SEG;
+                const float xC = halfWPx * cosf(t);
+                const float yC = halfHPx * sinf(t);
+                const float tx = -halfWPx * sinf(t);
+                const float ty =  halfHPx * cosf(t);
+                const float tlen = std::max(1e-6f, sqrtf(tx*tx + ty*ty));
+                const float perpX = -ty / tlen;
+                const float perpY =  tx / tlen;
+                const float uO = centerU + (xC + perpX * thicknessPx) / dstW;
+                const float vO = 0.5f + (yC + perpY * thicknessPx) / dstH;
+                const float uI = centerU + (xC - perpX * thicknessPx) / dstW;
+                const float vI = 0.5f + (yC - perpY * thicknessPx) / dstH;
+                if (i > 0) {
+                    line(prevUO, prevVO, uO, vO);
+                    line(uI, vI, prevUI, prevVI);
+                }
+                prevUO = uO; prevVO = vO;
+                prevUI = uI; prevVI = vI;
+            }
+        };
+
+        // Middle loop sized so the surah-title plate clears comfortably
+        // inside it. Side loops touch the middle at its tangent points
+        // and span a circular silhouette.
+        const float midHalfWPx  = dstW * 0.28f;
+        const float midHalfHPx  = dstH * 0.40f;
+        const float sideHalfPx  = dstH * 0.30f;   // round-ish side loops
+        const float thicknessPx = minSide * 0.022f;
+
+        ovalLoop(0.50f, midHalfWPx, midHalfHPx, thicknessPx);
+        const float sideOffsetU = (midHalfWPx + sideHalfPx) / dstW;
+        ovalLoop(0.50f - sideOffsetU, sideHalfPx, sideHalfPx, thicknessPx * 0.9f);
+        ovalLoop(0.50f + sideOffsetU, sideHalfPx, sideHalfPx, thicknessPx * 0.9f);
+
+        // 6-point stars at the kiss points between adjacent loops.
+        const float kissLeftU  = 0.50f - midHalfWPx / dstW;
+        const float kissRightU = 0.50f + midHalfWPx / dstW;
+        auto kissStar = [&](float u, float rPx) {
+            polystar(u, 0.5f,
+                     rPx/dstW, rPx/dstH,
+                     (rPx*0.55f)/dstW, (rPx*0.55f)/dstH,
+                     6, 0.0f, false);
+        };
+        const float rKiss = minSide * 0.024f;
+        kissStar(kissLeftU,  rKiss);
+        kissStar(kissRightU, rKiss);
+
+        // Tiny petal accents at the far outer tips of the side loops, to
+        // bracket the whole chain.
+        const float farLeftU  = kissLeftU  - 2.0f * sideHalfPx / dstW;
+        const float farRightU = kissRightU + 2.0f * sideHalfPx / dstW;
+        const float Lt = minSide * 0.040f, Wt = minSide * 0.012f;
+        petal(farLeftU,  0.5f, PI,    Lt/dstW, Lt/dstH, Wt/dstW, Wt/dstH, false);
+        petal(farRightU, 0.5f, 0.0f, Lt/dstW, Lt/dstH, Wt/dstW, Wt/dstH, false);
     }
 
     const int curveCount = totalCurves - curveStart;
