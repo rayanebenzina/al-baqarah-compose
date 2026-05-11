@@ -220,15 +220,21 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
     }
 
     // -------- Ornaments --------
-    // polystar lays down N*2 line segments alternating between an outer
-    // and an inner radius, producing a filled N-pointed star.
+    // polystar emits an N-pointed star outline. When `reverse` is true
+    // the path is traced the other way around — under non-zero winding
+    // that turns the shape into a "hole" cut from any previously-filled
+    // region it overlaps. Stacking outer-fill / hole / inner-fill /
+    // smaller-hole / center-fill produces visually-distinct concentric
+    // rings instead of one blobby filled mass.
+    const float PI = 3.14159265f;
     auto polystar = [&](float cxU, float cyV,
                          float ruOut, float rvOut, float ruIn, float rvIn,
-                         int points, float phase) {
+                         int points, float phase, bool reverse) {
         const int N = points * 2;
+        const float angStep = (reverse ? -1.0f : 1.0f) * PI / (float)points;
         float prevX = 0.0f, prevY = 0.0f;
         for (int i = 0; i <= N; ++i) {
-            const float ang = phase + (float)i * 3.14159265f / (float)points;
+            const float ang = phase + (float)i * angStep;
             const bool isOut = (i & 1) == 0;
             const float ru = isOut ? ruOut : ruIn;
             const float rv = isOut ? rvOut : rvIn;
@@ -238,72 +244,104 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
             prevX = x; prevY = y;
         }
     };
+    // petal emits an almond / lens shape: two quadratic Béziers, base at
+    // `c`, tip at `c + dir*len`, control points offset sideways by
+    // `halfWidth`. Forms a single closed teardrop suitable for floral
+    // rosettes.
+    auto petal = [&](float cU, float cV, float angle,
+                     float lenU, float lenV,
+                     float halfWU, float halfWV, bool reverse) {
+        const float dirU = cosf(angle), dirV = sinf(angle);
+        const float perpU = -sinf(angle), perpV = cosf(angle);
+        const float baseU = cU, baseV = cV;
+        const float tipU = cU + dirU * lenU;
+        const float tipV = cV + dirV * lenV;
+        const float midU = cU + dirU * lenU * 0.5f;
+        const float midV = cV + dirV * lenV * 0.5f;
+        const float c1U = midU + perpU * halfWU, c1V = midV + perpV * halfWV;
+        const float c2U = midU - perpU * halfWU, c2V = midV - perpV * halfWV;
+        if (reverse) {
+            curve(baseU, baseV, c2U, c2V, tipU, tipV);
+            curve(tipU,  tipV,  c1U, c1V, baseU, baseV);
+        } else {
+            curve(baseU, baseV, c1U, c1V, tipU, tipV);
+            curve(tipU,  tipV,  c2U, c2V, baseU, baseV);
+        }
+    };
 
-    // Four corner 12-pointed stars sit just inside the innermost band.
-    const float cornerOutPx = minSide * 0.13f;
-    const float cornerInPx  = minSide * 0.052f;
-    const float cornerInsetPx = bandPx + cornerOutPx + minSide * 0.015f;
+    // Two large floral end medallions at the short-edge centers.
+    // Each one stacks an outer star-burst with concentric hole/star
+    // layers and is wrapped in an outer ring of petals so the
+    // silhouette reads as a Mushaf rosette rather than a bare star.
+    const float roseOutPx   = minSide * 0.36f;
+    const float roseInsetPx = bandPx + roseOutPx + minSide * 0.020f;
     {
-        const float roU = cornerOutPx / dstW, roV = cornerOutPx / dstH;
-        const float riU = cornerInPx  / dstW, riV = cornerInPx  / dstH;
-        const float cU  = cornerInsetPx / dstW, cV  = cornerInsetPx / dstH;
-        const float phase = 3.14159265f / 12.0f;  // a tip points up
-        polystar(cU,        cV,        roU, roV, riU, riV, 12, phase);
-        polystar(1.0f - cU, cV,        roU, roV, riU, riV, 12, phase);
-        polystar(1.0f - cU, 1.0f - cV, roU, roV, riU, riV, 12, phase);
-        polystar(cU,        1.0f - cV, roU, roV, riU, riV, 12, phase);
+        // Star radii (px), shrinking toward the centre.
+        const float R1o = minSide * 0.36f, R1i = minSide * 0.22f;
+        const float R2o = minSide * 0.21f, R2i = minSide * 0.14f;
+        const float R3o = minSide * 0.13f, R3i = minSide * 0.070f;
+        const float R4o = minSide * 0.065f, R4i = minSide * 0.038f;
+        const float R5o = minSide * 0.034f, R5i = minSide * 0.014f;
+        // Petal ring (just outside the star burst, fills the corners).
+        const float petalLenPx     = minSide * 0.45f;
+        const float petalHalfWPx   = minSide * 0.040f;
+
+        auto medallion = [&](float c) {
+            // Outer petal halo — 16 long petals reaching toward the bands.
+            for (int p = 0; p < 16; ++p) {
+                const float ang = (float)p * 2.0f * PI / 16.0f;
+                petal(c, 0.5f, ang,
+                      petalLenPx / dstW, petalLenPx / dstH,
+                      petalHalfWPx / dstW, petalHalfWPx / dstH, false);
+            }
+            // Five-layer alternating star: fill / hole / fill / hole / fill.
+            polystar(c, 0.5f, R1o/dstW, R1o/dstH, R1i/dstW, R1i/dstH, 16, 0.0f,       false);
+            polystar(c, 0.5f, R2o/dstW, R2o/dstH, R2i/dstW, R2i/dstH, 12, PI/24.0f,  true);
+            polystar(c, 0.5f, R3o/dstW, R3o/dstH, R3i/dstW, R3i/dstH,  8, PI/16.0f,  false);
+            polystar(c, 0.5f, R4o/dstW, R4o/dstH, R4i/dstW, R4i/dstH,  6, 0.0f,       true);
+            polystar(c, 0.5f, R5o/dstW, R5o/dstH, R5i/dstW, R5i/dstH,  4, PI/8.0f,   false);
+        };
+        const float cU = roseInsetPx / dstW;
+        medallion(cU);
+        medallion(1.0f - cU);
     }
 
-    // Two end medallions at the vertical centers of the short edges.
-    // 8-pointed star + smaller 8-pointed star rotated 22.5° on top —
-    // overlapping CCW stars stay filled under non-zero winding and
-    // produce a 16-rayed look.
-    const float medOutPx  = minSide * 0.18f;
-    const float medMidPx  = minSide * 0.075f;
-    const float medCorePx = minSide * 0.085f;
-    const float medCoreInPx = minSide * 0.040f;
-    const float medInsetPxU = bandPx + medOutPx + minSide * 0.030f;
+    // Long-edge ornament chain: alternating 8-pointed stars and small
+    // petal pairs filling the strip between the medallions, top & bottom.
+    const float chainOutPx  = minSide * 0.050f;
+    const float chainInPx   = minSide * 0.022f;
+    const float chainInsetVPx = bandPx + chainOutPx + minSide * 0.015f;
     {
-        const float roU = medOutPx / dstW,  roV = medOutPx / dstH;
-        const float riU = medMidPx / dstW,  riV = medMidPx / dstH;
-        const float coreOutU = medCorePx / dstW, coreOutV = medCorePx / dstH;
-        const float coreInU  = medCoreInPx / dstW, coreInV = medCoreInPx / dstH;
-        const float cU = medInsetPxU / dstW;
-        polystar(cU,        0.5f, roU, roV, riU, riV, 8, 0.0f);
-        polystar(cU,        0.5f, roU, roV, riU, riV, 8, 3.14159265f / 8.0f);
-        polystar(cU,        0.5f, coreOutU, coreOutV, coreInU, coreInV, 6, 0.0f);
-        polystar(1.0f - cU, 0.5f, roU, roV, riU, riV, 8, 0.0f);
-        polystar(1.0f - cU, 0.5f, roU, roV, riU, riV, 8, 3.14159265f / 8.0f);
-        polystar(1.0f - cU, 0.5f, coreOutU, coreOutV, coreInU, coreInV, 6, 0.0f);
-    }
-
-    // Small 6-pointed accents along the long top/bottom edges, between
-    // the corner ornaments. Skipped on near-square frames where they'd
-    // crowd the corners.
-    const float accentOutPx = minSide * 0.045f;
-    const float accentInPx  = minSide * 0.020f;
-    const float accentInsetVPx = bandPx + accentOutPx + minSide * 0.010f;
-    const float topOpenUPx = dstW * 0.5f -
-                             (cornerInsetPx + cornerOutPx) -
-                             (medInsetPxU + medOutPx);
-    if (topOpenUPx > minSide * 0.20f) {
-        const float roU = accentOutPx / dstW, roV = accentOutPx / dstH;
-        const float riU = accentInPx  / dstW, riV = accentInPx  / dstH;
-        const float aV = accentInsetVPx / dstH;
-        // Two accents between left medallion and corner top/bottom, two
-        // between right medallion and corner — total 4 per long edge.
-        const float leftSpanLowU  = (cornerInsetPx + cornerOutPx) / dstW;
-        const float leftSpanHighU = (medInsetPxU - medOutPx) / dstW;
-        const float rightSpanLowU  = 1.0f - (medInsetPxU - medOutPx) / dstW;
-        const float rightSpanHighU = 1.0f - (cornerInsetPx + cornerOutPx) / dstW;
-        for (int k = 0; k < 2; ++k) {
-            const float tL = (float)(k + 1) / 3.0f;
-            const float uL = leftSpanLowU + tL * (leftSpanHighU - leftSpanLowU);
-            const float uR = rightSpanLowU + tL * (rightSpanHighU - rightSpanLowU);
-            polystar(uL, aV,        roU, roV, riU, riV, 6, 0.0f);
-            polystar(uR, aV,        roU, roV, riU, riV, 6, 0.0f);
-            polystar(uL, 1.0f - aV, roU, roV, riU, riV, 6, 0.0f);
-            polystar(uR, 1.0f - aV, roU, roV, riU, riV, 6, 0.0f);
+        // Range along U: between the medallions, with a small margin so
+        // the chain doesn't crash into the petal halos.
+        const float marginU = (roseInsetPx + roseOutPx + minSide * 0.05f) / dstW;
+        if (marginU < 0.45f) {
+            const float lowU = marginU;
+            const float highU = 1.0f - marginU;
+            const float aVtop = chainInsetVPx / dstH;
+            const float aVbot = 1.0f - chainInsetVPx / dstH;
+            const int N = 7;
+            const float roU = chainOutPx / dstW, roV = chainOutPx / dstH;
+            const float riU = chainInPx / dstW,  riV = chainInPx / dstH;
+            const float petLenU = (chainOutPx * 0.9f) / dstW;
+            const float petLenV = (chainOutPx * 0.9f) / dstH;
+            const float petHWU  = (chainOutPx * 0.18f) / dstW;
+            const float petHWV  = (chainOutPx * 0.18f) / dstH;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = lowU + t * (highU - lowU);
+                if ((k & 1) == 0) {
+                    // 8-pointed star
+                    polystar(uPos, aVtop, roU, roV, riU, riV, 8, 0.0f, false);
+                    polystar(uPos, aVbot, roU, roV, riU, riV, 8, 0.0f, false);
+                } else {
+                    // Pair of petals (one up, one down) — a small floral knot
+                    petal(uPos, aVtop, -PI * 0.5f, petLenU, petLenV, petHWU, petHWV, false);
+                    petal(uPos, aVtop,  PI * 0.5f, petLenU, petLenV, petHWU, petHWV, false);
+                    petal(uPos, aVbot, -PI * 0.5f, petLenU, petLenV, petHWU, petHWV, false);
+                    petal(uPos, aVbot,  PI * 0.5f, petLenU, petLenV, petHWU, petHWV, false);
+                }
+            }
         }
     }
 
