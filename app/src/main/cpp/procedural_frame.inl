@@ -48,12 +48,55 @@ static void rasterizeFrameGrid(const std::vector<float>& allCurves,
         return (du * du + dv * dv) < (interiorMargin * interiorMargin);
     };
 
-    // Winding number at (px,py): for every quadratic curve, find roots
-    // of y(t) = py, then count +1/-1 based on dy/dt direction whenever
-    // x(t) > px (rightward horizontal ray cast).
-    auto winding = [&](float px, float py) -> int {
+    // Jitter the ray's v by a tiny irrational so it never aligns with
+    // a shape's horizontal axis (e.g., the middle ellipse's v=0.5).
+    constexpr float V_JITTER = 0.000173f;
+
+    // Per-row curve index. Each curve only contributes to rows whose
+    // v_center falls inside its Y extent — and most curves are short
+    // (single petals, small star points), so each lands in ≤3 rows
+    // out of H. Iterating the row's bucket instead of all curves cuts
+    // ~90% of the per-cell ray-cast work and is the dominant speed
+    // win for the host sweep. Re-built per call; cheap (O(curves·H)).
+    std::vector<std::vector<int>> rowCurves((size_t)H);
+    for (int i = 0; i < curveCount; ++i) {
+        const float y0 = allCurves[(curveStart + i) * 6 + 1];
+        const float y1 = allCurves[(curveStart + i) * 6 + 3];
+        const float y2 = allCurves[(curveStart + i) * 6 + 5];
+        float yMin = std::min(y0, y2);
+        float yMax = std::max(y0, y2);
+        // A quadratic Bézier in Y can have its extremum strictly
+        // between t=0 and t=1; include that when computing bounds so
+        // we don't miss tall curves with bowed control points.
+        const float a = y0 - 2.0f * y1 + y2;
+        const float b = 2.0f * (y1 - y0);
+        if (std::fabs(a) > 1e-9f) {
+            const float tExt = -b / (2.0f * a);
+            if (tExt > 0.0f && tExt < 1.0f) {
+                const float mtE = 1.0f - tExt;
+                const float yExt = mtE*mtE*y0 + 2.0f*mtE*tExt*y1 + tExt*tExt*y2;
+                yMin = std::min(yMin, yExt);
+                yMax = std::max(yMax, yExt);
+            }
+        }
+        // Row r covers v ∈ [r/H, (r+1)/H]; the ray for row r is at
+        // v_center = (r+0.5)/H + V_JITTER. The curve contributes only
+        // to rows whose v_center sits in (yMin, yMax). Solve for r.
+        const float rMinF = (yMin - V_JITTER) * (float)H - 0.5f;
+        const float rMaxF = (yMax - V_JITTER) * (float)H - 0.5f;
+        int r0 = (int)std::ceil(rMinF);
+        int r1 = (int)std::floor(rMaxF);
+        if (r0 < 0) r0 = 0;
+        if (r1 > H - 1) r1 = H - 1;
+        for (int r = r0; r <= r1; ++r) {
+            rowCurves[(size_t)r].push_back(i);
+        }
+    }
+
+    // Winding at (px, py), using only the curves that span py.
+    auto winding = [&](float px, float py, const std::vector<int>& active) -> int {
         int wn = 0;
-        for (int i = 0; i < curveCount; ++i) {
+        for (int i : active) {
             const float x0 = allCurves[(curveStart + i) * 6 + 0];
             const float y0 = allCurves[(curveStart + i) * 6 + 1];
             const float x1 = allCurves[(curveStart + i) * 6 + 2];
@@ -104,16 +147,14 @@ static void rasterizeFrameGrid(const std::vector<float>& allCurves,
     float uMin = 1e9f, uMax = -1e9f, vMin = 1e9f, vMax = -1e9f;
     int interiorHits = 0;
     int inkCells = 0;
-    // Jitter the ray's v by a tiny irrational so it never aligns with
-    // a shape's horizontal axis (e.g., the middle ellipse's v=0.5).
-    constexpr float V_JITTER = 0.000173f;
     for (int r = 0; r < H; ++r) {
         std::string& row = gridOut[r];
         row.assign((size_t)W, ' ');
         const float v = (r + 0.5f) / (float)H + V_JITTER;
+        const std::vector<int>& active = rowCurves[(size_t)r];
         for (int c = 0; c < W; ++c) {
             const float u = (c + 0.5f) / (float)W;
-            const bool filled = (winding(u, v) != 0);
+            const bool filled = (winding(u, v, active) != 0);
             if (filled) {
                 ++inkCells;
                 uMin = std::min(uMin, u); uMax = std::max(uMax, u);

@@ -32,13 +32,21 @@ HEADER_RE = re.compile(
 GRID_RE = re.compile(r"frame-ascii \|(.{96})\|")
 
 
+def _row_bytes_to_uint8(row_str: str) -> np.ndarray:
+    # frombuffer is zero-copy (just reinterprets the bytes). Then
+    # comparing to space (ASCII 32) gives a 0/1 mask. Order of
+    # magnitude faster than a Python list comprehension at 96 chars
+    # per row × tens of thousands of rows.
+    return (np.frombuffer(row_str.encode("ascii"), dtype=np.uint8) != 32).astype(np.uint8)
+
+
 def parse_target() -> np.ndarray:
     txt = (HERE / "target_grid.txt").read_text()
     rows = []
     for line in txt.splitlines():
         m = re.match(r"\|(.{96})\|", line)
         if m:
-            rows.append([1 if c != " " else 0 for c in m.group(1)])
+            rows.append(_row_bytes_to_uint8(m.group(1)))
     assert len(rows) == H, f"target grid has {len(rows)} rows, expected {H}"
     return np.array(rows, dtype=np.uint8)
 
@@ -65,7 +73,7 @@ def parse_candidates(stream):
             continue
         mg = GRID_RE.search(line)
         if mg and header:
-            grid_rows.append([1 if c != " " else 0 for c in mg.group(1)])
+            grid_rows.append(_row_bytes_to_uint8(mg.group(1)))
     if header and len(grid_rows) == H:
         yield header, np.array(grid_rows, dtype=np.uint8)
 
@@ -97,6 +105,26 @@ def score(candidate: np.ndarray, target: np.ndarray) -> dict:
             "sym": float(sym)}
 
 
+def batch_score(grids: np.ndarray, target: np.ndarray) -> dict:
+    """Vectorised score computation: takes an (N, H, W) array of
+    candidate grids and returns per-candidate metrics as numpy arrays.
+    ~10× faster than scoring each candidate in a Python loop."""
+    tgt = target.astype(bool)
+    cand = grids.astype(bool)
+    inter = np.logical_and(cand, tgt).sum(axis=(1, 2))
+    union = np.logical_or(cand, tgt).sum(axis=(1, 2))
+    jaccard = np.where(union > 0, inter / np.maximum(union, 1), 0.0)
+    match = (cand == tgt).mean(axis=(1, 2))
+    sym = (cand == cand[:, :, ::-1]).mean(axis=(1, 2))
+    cand_ink = cand.sum(axis=(1, 2))
+    return {
+        "jaccard": jaccard,
+        "matchPct": match,
+        "sym": sym.astype(np.float64),
+        "candInk": cand_ink.astype(np.int64),
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--top", type=int, default=10)
@@ -105,14 +133,31 @@ def main():
     args = ap.parse_args()
 
     target = parse_target()
-    results = []
+    headers = []
+    grids_list = []
     for header, grid in parse_candidates(sys.stdin):
-        s = score(grid, target)
-        results.append((header, grid, s))
+        headers.append(header)
+        grids_list.append(grid)
 
-    if not results:
+    if not headers:
         print("No frame-ascii blocks parsed from stdin.", file=sys.stderr)
         sys.exit(1)
+
+    grids = np.stack(grids_list)  # shape (N, H, W)
+    batched = batch_score(grids, target)
+    # Quadrant density only needed for the printed top winner, so
+    # compute it later from the chosen grid — keeps the batch path
+    # branch-free.
+
+    results = []
+    for i, h in enumerate(headers):
+        results.append((h, grids[i], {
+            "jaccard": float(batched["jaccard"][i]),
+            "matchPct": float(batched["matchPct"][i]),
+            "sym": float(batched["sym"][i]),
+            "candInk": int(batched["candInk"][i]),
+            "targetInk": int(target.sum()),
+        }))
 
     # Title-interior invariant is a hard requirement: any candidate
     # that bleeds ink into the title cavity is disqualified, no
@@ -142,9 +187,18 @@ def main():
 
     print()
     print("Region density (cand vs target, abs diff):")
-    h, g, s = results[0]
-    for k, (cd, td, d) in s["regions"].items():
-        print(f"  {k:>6}: cand={cd:.2f}  target={td:.2f}  diff={d:.2f}")
+    h_top, g_top, _ = results[0]
+    qH, qW = H // 2, W // 2
+    for name, (r0, r1, c0, c1) in {
+        "TL": (0, qH, 0, qW),
+        "TR": (0, qH, qW, W),
+        "BL": (qH, H, 0, qW),
+        "BR": (qH, H, qW, W),
+        "CENTER": (qH - 4, qH + 4, W // 2 - 16, W // 2 + 16),
+    }.items():
+        cd = g_top[r0:r1, c0:c1].mean()
+        td = target[r0:r1, c0:c1].mean()
+        print(f"  {name:>6}: cand={cd:.2f}  target={td:.2f}  diff={abs(cd-td):.2f}")
 
     if args.show_best:
         print("\n--- Best candidate (seed=%d) ---" % results[0][0]["seed"])
