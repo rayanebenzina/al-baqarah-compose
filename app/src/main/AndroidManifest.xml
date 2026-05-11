@@ -23,9 +23,9 @@
         </activity>
 
         <activity
-            android:name=".vk.VulkanDebugActivity"
+            android:name=".vk.ReaderActivity"
             android:exported="true"
-            android:label="Vulkan Debug"
+            android:label="Mushaf Reader"
             android:screenOrientation="portrait"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
@@ -34,5 +34,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".vk.VulkanDebugActivity"
+            android:exported="true"
+            android:label="Vulkan Debug"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
     </application>
 </manifest>

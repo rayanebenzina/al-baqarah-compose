@@ -247,7 +247,7 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
                 std::vector<baqarah::ColrLayer> layers;
                 if (!baqarah::parseColrLayersV0(font.data.data(), (int)font.data.size(),
                                                 gid, layers)) {
-                    layers.push_back({gid, 0xFFFAEBC8u});
+                    layers.push_back({gid, 0xFF281E14u});  // dark brown on cream
                 }
 
                 for (const auto& L : layers) {
@@ -379,7 +379,7 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrLineFromTtf(
         // Resolve COLR layers (or fall back to single layer = base glyph).
         std::vector<baqarah::ColrLayer> layers;
         if (!baqarah::parseColrLayersV0(ttf.data(), ttfSize, baseGid, layers)) {
-            layers.push_back({baseGid, 0xFFFAEBC8u});  // parchment fallback
+            layers.push_back({baseGid, 0xFF281E14u});  // dark brown on cream
         }
 
         for (const auto& L : layers) {

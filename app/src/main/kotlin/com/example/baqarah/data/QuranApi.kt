@@ -18,6 +18,15 @@ interface QuranApi {
         @Query("per_page") perPage: Int = 300,
     ): VersesResponse
 
+    @GET("api/v4/verses/by_page/{page}")
+    suspend fun versesByPage(
+        @Path("page") page: Int,
+        @Query("words") words: Boolean = true,
+        @Query("word_fields") wordFields: String = "code_v2,page_number,char_type_name",
+        @Query("mushaf") mushaf: Int = 19,
+        @Query("per_page") perPage: Int = 300,
+    ): VersesResponse
+
     companion object {
         private const val BASE_URL = "https://api.quran.com/"
 

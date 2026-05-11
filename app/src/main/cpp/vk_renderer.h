@@ -133,9 +133,11 @@ class VkRenderer {
     VkSemaphore renderSem_[kFramesInFlight]{VK_NULL_HANDLE, VK_NULL_HANDLE};
     VkFence inFlightFence_[kFramesInFlight]{VK_NULL_HANDLE, VK_NULL_HANDLE};
 
-    float clearR_ = 0.02f;
-    float clearG_ = 0.05f;
-    float clearB_ = 0.04f;
+    // Cream Mushaf page background (sRGB ≈ #F5EAD2). Picked to read as a
+    // warm parchment under the dark-brown text fallback below.
+    float clearR_ = 0.961f;
+    float clearG_ = 0.918f;
+    float clearB_ = 0.824f;
 
     std::atomic<float> scrollY_{0.0f};
 };

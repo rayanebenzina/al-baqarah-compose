@@ -100,10 +100,10 @@ bool parseColrLayersV0(const uint8_t* ttf, int ttfSize, int baseGlyphId,
         // QPC v4 CPAL convention: palette index 0 is the "main text colour"
         // (black for light backgrounds). 0xFFFF is the spec-defined
         // foreground placeholder. Both get substituted with the app's text
-        // colour — parchment, for our dark reader. Other palette indices are
-        // tajweed-rule colours and pass through unchanged.
+        // colour — dark brown, for our cream Mushaf reader. Other palette
+        // indices are tajweed-rule colours and pass through unchanged.
         if (palIdx == 0 || palIdx == 0xFFFF) {
-            rgba = 0xFFFAEBC8u;  // ARGB: 0xFF FA EB C8 = (250, 235, 200)
+            rgba = 0xFF281E14u;  // ARGB: dark warm brown (40, 30, 20)
         } else {
             const uint32_t cidx = (uint32_t)pal0Start + (uint32_t)palIdx;
             const uint32_t cOff = colorRecsOff + cidx * 4;

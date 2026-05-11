@@ -53,7 +53,27 @@ class VulkanCanvasView @JvmOverloads constructor(
         android.view.ViewConfiguration.get(context).scaledMaximumFlingVelocity.toFloat()
     }
     private var lastTouchY = 0f
+    private var downTouchX = 0f
+    private var downTouchY = 0f
     private var dragging = false
+    private var gestureClaimed = false
+    private val touchSlop by lazy {
+        android.view.ViewConfiguration.get(context).scaledTouchSlop
+    }
+
+    /**
+     * Called when a clear horizontal swipe is detected. `direction` is +1
+     * if the user swiped LEFT (finger moved right→left, meaning "show the
+     * next thing in reading order"), -1 for RIGHT. The view does no
+     * further work on horizontal gestures — the host wires this to
+     * page/surah navigation.
+     */
+    var onHorizontalSwipe: ((direction: Int) -> Unit)? = null
+
+    /** Disables vertical scroll + fling, e.g. for the fixed-height
+     *  Mushaf-page mode. Touch is still consumed so horizontal swipes
+     *  reach `onHorizontalSwipe`. */
+    var scrollEnabled: Boolean = true
 
     init {
         renderThread.start()
@@ -156,28 +176,66 @@ class VulkanCanvasView @JvmOverloads constructor(
         renderer.setScrollY(scrollY)
     }
 
+    /** Reset scroll position to 0 (top of content). Used after swapping
+     *  to a new surah / page. */
+    fun resetScroll() {
+        if (!scroller.isFinished) scroller.forceFinished(true)
+        scrollY = 0f
+        renderer.setScrollY(0f)
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         velocityTracker.addMovement(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 if (!scroller.isFinished) scroller.forceFinished(true)
                 lastTouchY = event.y
+                downTouchX = event.x
+                downTouchY = event.y
                 dragging = true
+                gestureClaimed = false
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 if (!dragging) return false
+                val dxTotal = event.x - downTouchX
+                val dyTotal = event.y - downTouchY
+                // First gesture past slop: decide whether this is a
+                // vertical scroll or a horizontal swipe. Horizontal wins
+                // if dx clearly dominates dy.
+                if (!gestureClaimed && (kotlin.math.abs(dxTotal) > touchSlop ||
+                            kotlin.math.abs(dyTotal) > touchSlop)) {
+                    if (kotlin.math.abs(dxTotal) > kotlin.math.abs(dyTotal) * 1.5f) {
+                        // Treat as horizontal swipe — stop scrolling.
+                        gestureClaimed = true
+                        dragging = false
+                        return true
+                    }
+                    gestureClaimed = true
+                }
+                if (!scrollEnabled) return true
                 val dy = lastTouchY - event.y
                 lastTouchY = event.y
                 applyScrollDelta(dy)
                 return true
             }
             MotionEvent.ACTION_UP -> {
+                val dxTotal = event.x - downTouchX
+                val dyTotal = event.y - downTouchY
                 dragging = false
                 velocityTracker.computeCurrentVelocity(1000, flingMaxVelocity)
+                // Horizontal swipe wins if dx dominates and moved at
+                // least 1/6 of the screen width.
+                val horiz = kotlin.math.abs(dxTotal) > kotlin.math.abs(dyTotal) * 1.5f &&
+                        kotlin.math.abs(dxTotal) > width / 6f
+                if (horiz) {
+                    onHorizontalSwipe?.invoke(if (dxTotal < 0) +1 else -1)
+                    velocityTracker.clear()
+                    return true
+                }
                 val vy = -velocityTracker.yVelocity
                 velocityTracker.clear()
-                if (kotlin.math.abs(vy) > flingMinVelocity) {
+                if (scrollEnabled && kotlin.math.abs(vy) > flingMinVelocity) {
                     scroller.fling(
                         0, scrollY.toInt(), 0, vy.toInt(),
                         0, 0, 0, maxScrollY.toInt(),

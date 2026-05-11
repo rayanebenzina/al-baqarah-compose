@@ -21,6 +21,21 @@ class AyahCache(context: Context) {
     private fun surahDir(surah: Int): File = File(baseDir, "surah_$surah").apply { mkdirs() }
     private fun versesFile(surah: Int): File = File(surahDir(surah), "verses.json")
 
+    private fun pageDir(): File = File(baseDir, "page").apply { mkdirs() }
+    private fun pageFile(page: Int): File = File(pageDir(), "p$page.json")
+
+    fun saveVersesForPage(page: Int, verses: List<Verse>) {
+        pageFile(page).outputStream().use { it.write(verseListAdapter.toJson(verses).toByteArray()) }
+    }
+
+    fun loadVersesForPage(page: Int): List<Verse>? {
+        val f = pageFile(page)
+        if (!f.exists()) return null
+        return runCatching {
+            f.inputStream().use { verseListAdapter.fromJson(it.bufferedReader().readText()) }
+        }.getOrNull()
+    }
+
     fun atlasDir(surah: Int, fontSize: Int): File =
         File(surahDir(surah), "fs_$fontSize/atlas").apply { mkdirs() }
 
