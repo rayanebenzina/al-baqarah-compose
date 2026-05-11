@@ -16,6 +16,22 @@ layout(std430, set = 0, binding = 1) readonly buffer Layers {
     vec4 entries[];
 };
 
+layout(std430, set = 0, binding = 2) readonly buffer Bands {
+    // ivec2 per band; layerCount * NUM_BANDS entries laid out
+    // contiguously. Entry (layer, band) is at index
+    // (layer * NUM_BANDS + band), giving (offset, count) into
+    // `indices[]` for the curves that touch that band.
+    ivec2 bands[];
+};
+
+layout(std430, set = 0, binding = 3) readonly buffer CurveIndices {
+    // Flat int list. Each entry is a curve index local to the
+    // owning layer (0..layer.curveCount-1); add layer.curveOffset
+    // to get the global index into `pts[]`.
+    int indices[];
+};
+
+const int NUM_BANDS = 32;
 const float kEps = 1e-6;
 
 // Non-zero-winding contribution from a quadratic Bezier to a horizontal
@@ -67,11 +83,17 @@ int windingForCurve(vec2 p, vec2 a, vec2 b, vec2 c) {
     return w;
 }
 
-bool insideAt(vec2 p, int offset, int count) {
+bool insideAt(vec2 p, int curveOffset, int bandBase) {
+    int bandIdx = clamp(int(p.y * float(NUM_BANDS)), 0, NUM_BANDS - 1);
+    ivec2 br = bands[bandBase + bandIdx];
+    int off = br.x;
+    int cnt = br.y;
+
     int winding = 0;
-    for (int i = 0; i < count; ++i) {
-        int idx = (offset + i) * 3;
-        winding += windingForCurve(p, pts[idx + 0], pts[idx + 1], pts[idx + 2]);
+    for (int i = 0; i < cnt; ++i) {
+        int local = indices[off + i];
+        int gi = (curveOffset + local) * 3;
+        winding += windingForCurve(p, pts[gi + 0], pts[gi + 1], pts[gi + 2]);
     }
     return winding != 0;
 }
@@ -79,24 +101,21 @@ bool insideAt(vec2 p, int offset, int count) {
 void main() {
     vec4 e0 = entries[vLayer * 2 + 0];
     vec4 color = entries[vLayer * 2 + 1];
-    int offset = int(e0.x);
-    int count = int(e0.y);
+    int curveOffset = int(e0.x);
+    int curveCount = int(e0.y);
+    int bandBase = vLayer * NUM_BANDS;
 
-    if (count <= 0) discard;
+    if (curveCount <= 0) discard;
 
-    // 4x rotated-grid supersampling
+    // 2x rotated-grid supersampling
     vec2 duvdx = dFdx(vUV);
     vec2 duvdy = dFdy(vUV);
-    vec2 s0 = vUV + duvdx * 0.125 + duvdy * 0.375;
-    vec2 s1 = vUV + duvdx * 0.375 + duvdy * -0.125;
-    vec2 s2 = vUV + duvdx * -0.125 + duvdy * -0.375;
-    vec2 s3 = vUV + duvdx * -0.375 + duvdy * 0.125;
+    vec2 s0 = vUV + duvdx *  0.25 + duvdy *  0.25;
+    vec2 s1 = vUV + duvdx * -0.25 + duvdy * -0.25;
 
     float cov = 0.0;
-    if (insideAt(s0, offset, count)) cov += 0.25;
-    if (insideAt(s1, offset, count)) cov += 0.25;
-    if (insideAt(s2, offset, count)) cov += 0.25;
-    if (insideAt(s3, offset, count)) cov += 0.25;
+    if (insideAt(s0, curveOffset, bandBase)) cov += 0.5;
+    if (insideAt(s1, curveOffset, bandBase)) cov += 0.5;
 
     if (cov <= 0.001) discard;
     outColor = vec4(color.rgb, color.a * cov);

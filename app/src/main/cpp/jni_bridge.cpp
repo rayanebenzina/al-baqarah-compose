@@ -3,6 +3,9 @@
 #include <android/native_window_jni.h>
 #include <jni.h>
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdio>
 #include <vector>
 
@@ -73,6 +76,40 @@ struct FontHandle {
     bool ready = false;
 };
 
+// Build a band table for one layer's curves. Each layer has its curves
+// in `allCurves` starting at `curveOffsetGlobal` (6 floats per curve,
+// already normalized to [0,1] UV in TTF Y-up). For each band, append
+// the local curve indices (0..curveCount-1) of curves whose v-range
+// (convex-hull bound from the 3 control points) touches that band.
+//
+// bandsArr receives `kNumBands` ivec2 entries (offset, count) into
+// curveIndicesArr; curveIndicesArr receives the indices themselves.
+void appendLayerBands(const std::vector<float>& allCurves,
+                      int curveOffsetGlobal, int curveCount,
+                      std::vector<int>& bandsArr,
+                      std::vector<int>& curveIndicesArr) {
+    constexpr int NB = baqarah::VkRenderer::kNumBands;
+    std::array<std::vector<int>, NB> perBand;
+    for (int ci = 0; ci < curveCount; ++ci) {
+        const float* C = &allCurves[(size_t)(curveOffsetGlobal + ci) * 6];
+        const float y0 = C[1], y1 = C[3], y2 = C[5];
+        const float yMin = std::min(std::min(y0, y1), y2);
+        const float yMax = std::max(std::max(y0, y1), y2);
+        int bMin = (int)std::floor(yMin * (float)NB);
+        int bMax = (int)std::floor(yMax * (float)NB);
+        bMin = std::max(0, std::min(NB - 1, bMin));
+        bMax = std::max(0, std::min(NB - 1, bMax));
+        for (int b = bMin; b <= bMax; ++b) {
+            perBand[(size_t)b].push_back(ci);
+        }
+    }
+    for (int b = 0; b < NB; ++b) {
+        bandsArr.push_back((int)curveIndicesArr.size());
+        bandsArr.push_back((int)perBand[(size_t)b].size());
+        for (int idx : perBand[(size_t)b]) curveIndicesArr.push_back(idx);
+    }
+}
+
 bool initFontHandle(JNIEnv* env, jbyteArray ba, FontHandle& out) {
     const jsize n = env->GetArrayLength(ba);
     if (n <= 0) return false;
@@ -136,6 +173,8 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
     std::vector<float> allCurves;
     std::vector<float> layerData;
     std::vector<float> layerRects;
+    std::vector<int>   bandsArr;
+    std::vector<int>   curveIndicesArr;
     int totalCurves = 0;
     int totalLayers = 0;
 
@@ -204,6 +243,8 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
                         curveCountForLayer = lo.curveCount;
                         totalCurves += curveCountForLayer;
                     }
+                    appendLayerBands(allCurves, curveOffset, curveCountForLayer,
+                                     bandsArr, curveIndicesArr);
                     layerData.push_back((float)curveOffset);
                     layerData.push_back((float)curveCountForLayer);
                     layerData.push_back(0.0f);
@@ -231,12 +272,17 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
         baselineY += lineSpacingPx + ayahSpacingPx;
     }
 
-    LOGI("nUploadColrSurah: verses=%d codepoints=%d -> %d layers, %d curves, contentY=%.0f",
-         numVerses, (int)cpCount, totalLayers, totalCurves, baselineY);
+    const int bandsCount = totalLayers * baqarah::VkRenderer::kNumBands;
+    LOGI("nUploadColrSurah: verses=%d codepoints=%d -> %d layers, %d curves, "
+         "%d bands, %zu curveIndices, contentY=%.0f",
+         numVerses, (int)cpCount, totalLayers, totalCurves,
+         bandsCount, curveIndicesArr.size(), baselineY);
 
     if (!r->setColrGlyphs(allCurves.data(), totalCurves,
                           layerData.data(), layerRects.data(),
-                          totalLayers)) {
+                          totalLayers,
+                          bandsArr.data(), bandsCount,
+                          curveIndicesArr.data(), (int)curveIndicesArr.size())) {
         return -1.0f;
     }
     return baselineY;
@@ -278,6 +324,8 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrLineFromTtf(
     std::vector<float> allCurves;
     std::vector<float> layerData;   // 8 floats per layer (SSBO)
     std::vector<float> layerRects;  // 4 floats per layer (dst rect)
+    std::vector<int>   bandsArr;
+    std::vector<int>   curveIndicesArr;
     int totalCurves = 0;
     int totalLayers = 0;
 
@@ -333,6 +381,8 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrLineFromTtf(
                 curveCountForLayer = lo.curveCount;
                 totalCurves += curveCountForLayer;
             }
+            appendLayerBands(allCurves, curveOffset, curveCountForLayer,
+                             bandsArr, curveIndicesArr);
 
             // Per-layer SSBO entry: (offset, count, _, _, r, g, b, a)
             layerData.push_back((float)curveOffset);
@@ -359,12 +409,18 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrLineFromTtf(
         cursorX -= (float)base.advanceX * scale;
     }
 
-    LOGI("nUploadColrLineFromTtf: %d codepoints -> %d layers, %d curves",
-         (int)cpCount, totalLayers, totalCurves);
+    const int bandsCount = totalLayers * baqarah::VkRenderer::kNumBands;
+    LOGI("nUploadColrLineFromTtf: %d codepoints -> %d layers, %d curves, "
+         "%d bands, %zu curveIndices",
+         (int)cpCount, totalLayers, totalCurves,
+         bandsCount, curveIndicesArr.size());
 
     return r->setColrGlyphs(allCurves.data(), totalCurves,
                             layerData.data(), layerRects.data(),
-                            totalLayers) ? JNI_TRUE : JNI_FALSE;
+                            totalLayers,
+                            bandsArr.data(), bandsCount,
+                            curveIndicesArr.data(), (int)curveIndicesArr.size())
+               ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -412,6 +468,8 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrFromTtf(
 
     std::vector<float> allCurves;
     std::vector<float> layerData;  // 8 floats per layer
+    std::vector<int>   bandsArr;
+    std::vector<int>   curveIndicesArr;
     allCurves.reserve(2048);
     layerData.reserve(layers.size() * 8);
 
@@ -430,6 +488,8 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrFromTtf(
             const float b = ( L.rgba        & 0xFF) / 255.0f;
             layerData.push_back(r); layerData.push_back(g);
             layerData.push_back(b); layerData.push_back(a);
+            appendLayerBands(allCurves, totalCurves, 0,
+                             bandsArr, curveIndicesArr);
             emittedLayers++;
             continue;
         }
@@ -446,6 +506,7 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrFromTtf(
             allCurves.push_back(v);
         }
         totalCurves += count;
+        appendLayerBands(allCurves, offset, count, bandsArr, curveIndicesArr);
 
         // Per-layer entry (2 vec4 / 8 floats).
         layerData.push_back((float)offset);
@@ -460,8 +521,11 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrFromTtf(
         emittedLayers++;
     }
 
-    LOGI("nUploadColrFromTtf U+%04X (gid %d): %d layers, %d curves total",
-         codepoint, baseGid, emittedLayers, totalCurves);
+    const int bandsCount = emittedLayers * baqarah::VkRenderer::kNumBands;
+    LOGI("nUploadColrFromTtf U+%04X (gid %d): %d layers, %d curves total, "
+         "%d bands, %zu curveIndices",
+         codepoint, baseGid, emittedLayers, totalCurves,
+         bandsCount, curveIndicesArr.size());
 
     // Replicate one rect per layer so all layers stack at the same position.
     std::vector<float> rects((size_t)emittedLayers * 4);
@@ -474,5 +538,8 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrFromTtf(
 
     return r->setColrGlyphs(allCurves.data(), totalCurves,
                             layerData.data(), rects.data(),
-                            emittedLayers) ? JNI_TRUE : JNI_FALSE;
+                            emittedLayers,
+                            bandsArr.data(), bandsCount,
+                            curveIndicesArr.data(), (int)curveIndicesArr.size())
+               ? JNI_TRUE : JNI_FALSE;
 }

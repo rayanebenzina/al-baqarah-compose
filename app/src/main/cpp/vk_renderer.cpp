@@ -354,8 +354,8 @@ bool VkRenderer::createSyncObjects() {
 }
 
 bool VkRenderer::createDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding b[2]{};
-    for (int i = 0; i < 2; ++i) {
+    VkDescriptorSetLayoutBinding b[4]{};
+    for (int i = 0; i < 4; ++i) {
         b[i].binding = (uint32_t)i;
         b[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         b[i].descriptorCount = 1;
@@ -364,7 +364,7 @@ bool VkRenderer::createDescriptorSetLayout() {
 
     VkDescriptorSetLayoutCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    ci.bindingCount = 2;
+    ci.bindingCount = 4;
     ci.pBindings = b;
     VK_CHECK(vkCreateDescriptorSetLayout(device_, &ci, nullptr, &dsLayout_));
     return true;
@@ -373,7 +373,7 @@ bool VkRenderer::createDescriptorSetLayout() {
 bool VkRenderer::createDescriptorPool() {
     VkDescriptorPoolSize ps{};
     ps.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    ps.descriptorCount = 2;
+    ps.descriptorCount = 4;
 
     VkDescriptorPoolCreateInfo pci{};
     pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -561,6 +561,48 @@ bool VkRenderer::ensureLayerBuffer(VkDeviceSize bytes) {
     return true;
 }
 
+bool VkRenderer::ensureBandsBuffer(VkDeviceSize bytes) {
+    if (bandsBufferCapacity_ >= bytes && bandsBuffer_ != VK_NULL_HANDLE) return true;
+    if (bandsBuffer_ != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, bandsBuffer_, nullptr);
+        bandsBuffer_ = VK_NULL_HANDLE;
+    }
+    if (bandsBufferMem_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, bandsBufferMem_, nullptr);
+        bandsBufferMem_ = VK_NULL_HANDLE;
+    }
+    if (!createBuffer(bytes,
+                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                      bandsBuffer_, bandsBufferMem_)) {
+        return false;
+    }
+    bandsBufferCapacity_ = bytes;
+    return true;
+}
+
+bool VkRenderer::ensureIndicesBuffer(VkDeviceSize bytes) {
+    if (indicesBufferCapacity_ >= bytes && indicesBuffer_ != VK_NULL_HANDLE) return true;
+    if (indicesBuffer_ != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, indicesBuffer_, nullptr);
+        indicesBuffer_ = VK_NULL_HANDLE;
+    }
+    if (indicesBufferMem_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, indicesBufferMem_, nullptr);
+        indicesBufferMem_ = VK_NULL_HANDLE;
+    }
+    if (!createBuffer(bytes,
+                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                      indicesBuffer_, indicesBufferMem_)) {
+        return false;
+    }
+    indicesBufferCapacity_ = bytes;
+    return true;
+}
+
 bool VkRenderer::ensureVertexBuffer(VkDeviceSize bytes) {
     if (vbufCapacity_ >= bytes && vbuf_ != VK_NULL_HANDLE) return true;
     if (vbuf_ != VK_NULL_HANDLE) {
@@ -584,9 +626,11 @@ bool VkRenderer::ensureVertexBuffer(VkDeviceSize bytes) {
 
 bool VkRenderer::setColrGlyphs(const float* allCurves, int totalCurveCount,
                                const float* layerData, const float* layerRects,
-                               int layerCount) {
+                               int layerCount,
+                               const int* bands, int bandsCount,
+                               const int* curveIndices, int curveIndicesCount) {
     if (!valid()) return false;
-    if (totalCurveCount < 0 || layerCount < 0) return false;
+    if (totalCurveCount < 0 || layerCount < 0 || bandsCount < 0 || curveIndicesCount < 0) return false;
     vkDeviceWaitIdle(device_);
 
     // Upload curves
@@ -613,16 +657,40 @@ bool VkRenderer::setColrGlyphs(const float* allCurves, int totalCurveCount,
     }
     layerCount_ = (uint32_t)layerCount;
 
-    // Rebind both SSBOs into the descriptor set.
-    VkDescriptorBufferInfo bi[2]{};
+    // Upload bands: bandsCount * 2 ints (offset, count per band).
+    const VkDeviceSize bandsBytes =
+        std::max<VkDeviceSize>(16, (VkDeviceSize)bandsCount * 2 * sizeof(int));
+    if (!ensureBandsBuffer(bandsBytes)) return false;
+    if (bandsCount > 0) {
+        void* mapped = nullptr;
+        vkMapMemory(device_, bandsBufferMem_, 0, bandsBytes, 0, &mapped);
+        std::memcpy(mapped, bands, bandsCount * 2 * sizeof(int));
+        vkUnmapMemory(device_, bandsBufferMem_);
+    }
+
+    // Upload curveIndices.
+    const VkDeviceSize indicesBytes =
+        std::max<VkDeviceSize>(16, (VkDeviceSize)curveIndicesCount * sizeof(int));
+    if (!ensureIndicesBuffer(indicesBytes)) return false;
+    if (curveIndicesCount > 0) {
+        void* mapped = nullptr;
+        vkMapMemory(device_, indicesBufferMem_, 0, indicesBytes, 0, &mapped);
+        std::memcpy(mapped, curveIndices, curveIndicesCount * sizeof(int));
+        vkUnmapMemory(device_, indicesBufferMem_);
+    }
+
+    // Rebind all SSBOs into the descriptor set.
+    VkDescriptorBufferInfo bi[4]{};
     bi[0].buffer = curveBuffer_;
-    bi[0].offset = 0;
-    bi[0].range = VK_WHOLE_SIZE;
     bi[1].buffer = layerBuffer_;
-    bi[1].offset = 0;
-    bi[1].range = VK_WHOLE_SIZE;
-    VkWriteDescriptorSet wr[2]{};
-    for (int i = 0; i < 2; ++i) {
+    bi[2].buffer = bandsBuffer_;
+    bi[3].buffer = indicesBuffer_;
+    for (int i = 0; i < 4; ++i) {
+        bi[i].offset = 0;
+        bi[i].range = VK_WHOLE_SIZE;
+    }
+    VkWriteDescriptorSet wr[4]{};
+    for (int i = 0; i < 4; ++i) {
         wr[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         wr[i].dstSet = descSet_;
         wr[i].dstBinding = (uint32_t)i;
@@ -630,7 +698,7 @@ bool VkRenderer::setColrGlyphs(const float* allCurves, int totalCurveCount,
         wr[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         wr[i].pBufferInfo = &bi[i];
     }
-    vkUpdateDescriptorSets(device_, 2, wr, 0, nullptr);
+    vkUpdateDescriptorSets(device_, 4, wr, 0, nullptr);
 
     // Build N quads — one per layer, each at its own dst rect, tagged
     // with its layer index. UV.v is flipped (1 at top, 0 at bottom) so

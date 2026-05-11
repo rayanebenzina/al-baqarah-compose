@@ -21,21 +21,28 @@ class VkRenderer {
     void detachWindow();
     bool drawFrame();
 
-    // Replace both SSBOs and the vertex buffer with N COLR layers
-    // belonging to one or more codepoints.
+    // Replace all SSBOs and the vertex buffer with N COLR layers.
     //
-    //   `allCurves`  — every layer's curves concatenated, 6 floats per curve.
-    //   `layerData`  — 8 floats per layer (2 vec4 in std430):
-    //                  [curveOffset, curveCount, _pad, _pad, r, g, b, a]
-    //   `layerRects` — 4 floats per layer: [dstX, dstY, dstW, dstH]
+    //   `allCurves`     — every layer's curves concatenated, 6 floats per curve.
+    //   `layerData`     — 8 floats per layer (2 vec4 in std430):
+    //                     [curveOffset, curveCount, _pad, _pad, r, g, b, a]
+    //   `layerRects`    — 4 floats per layer: [dstX, dstY, dstW, dstH]
+    //   `bands`         — `layerCount * NUM_BANDS` ivec2s (offset, count) into
+    //                     curveIndices. Each band covers a horizontal slice
+    //                     of the layer's local UV (0..1).
+    //   `curveIndices`  — flat int array; each entry is a curve index local
+    //                     to its layer (0..layer.curveCount-1).
     //
-    // The vertex buffer is built as one quad per layer at each layer's own
-    // destination rect, tagged with its layer index. Layers belonging to
-    // the same codepoint will share rects (and stack as a COLR composite);
-    // layers from different codepoints have distinct rects.
+    // One quad per layer is emitted at its rect, tagged with its layer
+    // index. The fragment shader uses pixel UV.v to pick a band, then
+    // iterates only the curves listed in that band.
     bool setColrGlyphs(const float* allCurves, int totalCurveCount,
                        const float* layerData, const float* layerRects,
-                       int layerCount);
+                       int layerCount,
+                       const int* bands, int bandsCount,
+                       const int* curveIndices, int curveIndicesCount);
+
+    static constexpr int kNumBands = 32;
 
     void setScrollY(float y) { scrollY_ = y; }
 
@@ -55,6 +62,8 @@ class VkRenderer {
     bool createDescriptorPool();
     bool ensureCurveBuffer(VkDeviceSize bytes);
     bool ensureLayerBuffer(VkDeviceSize bytes);
+    bool ensureBandsBuffer(VkDeviceSize bytes);
+    bool ensureIndicesBuffer(VkDeviceSize bytes);
     bool ensureVertexBuffer(VkDeviceSize bytes);
 
     void recordCommandBuffer(uint32_t imageIndex);
@@ -101,6 +110,14 @@ class VkRenderer {
     VkDeviceMemory layerBufferMem_ = VK_NULL_HANDLE;
     VkDeviceSize layerBufferCapacity_ = 0;
     uint32_t layerCount_ = 0;
+
+    VkBuffer bandsBuffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory bandsBufferMem_ = VK_NULL_HANDLE;
+    VkDeviceSize bandsBufferCapacity_ = 0;
+
+    VkBuffer indicesBuffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory indicesBufferMem_ = VK_NULL_HANDLE;
+    VkDeviceSize indicesBufferCapacity_ = 0;
 
     VkBuffer vbuf_ = VK_NULL_HANDLE;
     VkDeviceMemory vbufMem_ = VK_NULL_HANDLE;

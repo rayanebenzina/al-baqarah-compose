@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class VulkanCanvasView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
-) : SurfaceView(context, attrs), SurfaceHolder.Callback, Choreographer.FrameCallback {
+) : SurfaceView(context, attrs), SurfaceHolder.Callback {
 
     private val renderer = NativeRenderer()
     private val renderThread = HandlerThread("BaqarahVkRender", Process.THREAD_PRIORITY_DISPLAY)
@@ -61,6 +61,14 @@ class VulkanCanvasView @JvmOverloads constructor(
         holder.addCallback(this)
     }
 
+    private val renderLoop = object : Runnable {
+        override fun run() {
+            if (!running.get()) return
+            if (surfaceReady.get()) renderer.drawFrame()
+            renderHandler.post(this)
+        }
+    }
+
     override fun surfaceCreated(holder: SurfaceHolder) {
         val surface = holder.surface
         renderHandler.post {
@@ -70,7 +78,7 @@ class VulkanCanvasView @JvmOverloads constructor(
             if (ok) {
                 applyPending()
                 if (!running.getAndSet(true)) {
-                    post { Choreographer.getInstance().postFrameCallback(this) }
+                    renderHandler.post(renderLoop)
                 }
             }
         }
@@ -90,17 +98,8 @@ class VulkanCanvasView @JvmOverloads constructor(
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         surfaceReady.set(false)
         running.set(false)
-        Choreographer.getInstance().removeFrameCallback(this)
+        renderHandler.removeCallbacks(renderLoop)
         renderHandler.post { renderer.detachSurface() }
-    }
-
-    override fun doFrame(frameTimeNanos: Long) {
-        if (!running.get()) return
-        Choreographer.getInstance().postFrameCallback(this)
-        if (!surfaceReady.get()) return
-        renderHandler.post {
-            if (surfaceReady.get()) renderer.drawFrame()
-        }
     }
 
     fun setColrGlyph(
@@ -154,7 +153,7 @@ class VulkanCanvasView @JvmOverloads constructor(
     fun setContentHeight(totalContentPx: Float) {
         maxScrollY = maxOf(0f, totalContentPx - height.toFloat())
         scrollY = scrollY.coerceIn(0f, maxScrollY)
-        renderHandler.post { renderer.setScrollY(scrollY) }
+        renderer.setScrollY(scrollY)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -198,14 +197,14 @@ class VulkanCanvasView @JvmOverloads constructor(
 
     private fun applyScrollDelta(dy: Float) {
         scrollY = (scrollY + dy).coerceIn(0f, maxScrollY)
-        renderHandler.post { renderer.setScrollY(scrollY) }
+        renderer.setScrollY(scrollY)
     }
 
     private val flingCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
             if (scroller.computeScrollOffset()) {
                 scrollY = scroller.currY.toFloat().coerceIn(0f, maxScrollY)
-                renderHandler.post { renderer.setScrollY(scrollY) }
+                renderer.setScrollY(scrollY)
                 Choreographer.getInstance().postFrameCallback(this)
             }
         }
@@ -231,8 +230,8 @@ class VulkanCanvasView @JvmOverloads constructor(
 
     fun release() {
         running.set(false)
-        Choreographer.getInstance().removeFrameCallback(this)
         Choreographer.getInstance().removeFrameCallback(flingCallback)
+        renderHandler.removeCallbacks(renderLoop)
         velocityTracker.recycle()
         renderHandler.post {
             renderer.detachSurface()
