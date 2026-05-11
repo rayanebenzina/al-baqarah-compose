@@ -238,10 +238,31 @@ class ReaderActivity : Activity() {
                 ) { totalHeightPx ->
                     canvas.scrollEnabled = (mode == Mode.Surah)
                     canvas.setContentHeight(totalHeightPx)
+                    maybeRunFrameAsciiSweep()
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "load $mode failed (page=$currentPage surah=$currentSurah)", t)
             }
+        }
+    }
+
+    /** Debug-only: if `debug.baqarah.frame.sweep=N[:STRIDE]` is set,
+     *  dump ASCII grids for seeds [0, STRIDE, 2·STRIDE, …, (N-1)·STRIDE]
+     *  to logcat after the surah finishes loading. STRIDE defaults to
+     *  1 if omitted. Pairs with `debug.baqarah.frame=1`. */
+    private fun maybeRunFrameAsciiSweep() {
+        if (mode != Mode.Surah) return
+        val raw = try {
+            val p = Runtime.getRuntime().exec(arrayOf("getprop", "debug.baqarah.frame.sweep"))
+            p.inputStream.bufferedReader().readText().trim()
+        } catch (t: Throwable) { "" }
+        if (raw.isEmpty()) return
+        val parts = raw.split(":")
+        val n = parts.getOrNull(0)?.toIntOrNull() ?: 0
+        val stride = parts.getOrNull(1)?.toIntOrNull() ?: 1
+        if (n > 0) {
+            Log.i(TAG, "frame ASCII sweep: $n seeds stride=$stride")
+            canvas.dumpFrameAsciiSweep(0, n, stride)
         }
     }
 
@@ -252,6 +273,6 @@ class ReaderActivity : Activity() {
         private const val BG_TOPBAR = 0xFFE9DCBE.toInt()       // slightly darker cream
         private const val INK_DARK = 0xFF281E14.toInt()        // matches glyph fallback
         // Keep in sync with NUM_STYLES in jni_bridge.cpp emitFrame switch.
-        private const val FRAME_STYLE_COUNT = 3600
+        private const val FRAME_STYLE_COUNT = 18000
     }
 }

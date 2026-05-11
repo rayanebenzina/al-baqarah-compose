@@ -74,6 +74,15 @@ class NativeRenderer {
     fun updateFrameSeed(frameSeed: Int): Boolean =
         nUpdateFrameSeed(handle, frameSeed)
 
+    /**
+     * Debug-only sweep: call emitFrame for seeds in [start, start+count)
+     * using throwaway buffers, so each seed dumps its ASCII grid to
+     * logcat (when `debug.baqarah.frame=1`) without touching the
+     * renderer. Returns the number of seeds processed.
+     */
+    fun dumpFrameAsciiSweep(start: Int, count: Int, stride: Int = 1): Int =
+        nDumpFrameAsciiSweep(handle, start, count, stride)
+
     fun release() {
         if (handle != 0L) {
             nDestroy(handle)
@@ -106,4 +115,5 @@ class NativeRenderer {
         frameSeed: Int,
     ): Float
     private external fun nUpdateFrameSeed(handle: Long, frameSeed: Int): Boolean
+    private external fun nDumpFrameAsciiSweep(handle: Long, start: Int, count: Int, stride: Int): Int
 }

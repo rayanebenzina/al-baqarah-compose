@@ -206,6 +206,14 @@ class VulkanCanvasView @JvmOverloads constructor(
         }
     }
 
+    /** Debug-only: dump ASCII grids for a range of seeds to logcat
+     *  without touching the renderer. Runs on the render thread to
+     *  share the same C++ surah cache. See `frame-ascii` filter on the
+     *  BaqarahVkJNI tag. */
+    fun dumpFrameAsciiSweep(start: Int, count: Int, stride: Int = 1) {
+        renderHandler.post { renderer.dumpFrameAsciiSweep(start, count, stride) }
+    }
+
     fun setContentHeight(totalContentPx: Float) {
         maxScrollY = maxOf(0f, totalContentPx - height.toFloat())
         scrollY = scrollY.coerceIn(0f, maxScrollY)

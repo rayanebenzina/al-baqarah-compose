@@ -1,0 +1,5 @@
+test_frame
+*.o
+check_*.png
+*.stroked.svg
+__pycache__/
