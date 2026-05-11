@@ -276,7 +276,7 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
     // share the triple band above and emit two end medallions plus a
     // chain along the long edges, but the motifs differ — stars,
     // petals, sunburst rays, or interlaced girih shapes.
-    const int NUM_STYLES = 13;
+    const int NUM_STYLES = 16;
     const int style = ((unsigned)seed) % (unsigned)NUM_STYLES;
     LOGI("emitFrame: seed=%d style=%d", seed, style);
 
@@ -1058,6 +1058,185 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
                     petal(sU, sVb, ang,
                           (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
                           (minSide*0.006f)/dstW, (minSide*0.006f)/dstH, false);
+                }
+            }
+        }
+    } else if (style == 13) {
+        // -------- Style 13: Rose curve (rhodonea) --------
+        // r = R * |cos(k * theta)| traces a rose with 2k petals (for even
+        // k). Sampled densely and emitted as a polyline ring. Two nested
+        // roses with different k counts create a bouquet effect.
+        auto rose = [&](float cU, float cV, float R, int k, float phase,
+                        bool reverse) {
+            const int STEPS = 240;
+            float prevU = 0.0f, prevV = 0.0f;
+            for (int i = 0; i <= STEPS; ++i) {
+                const float t = (float)i / (float)STEPS;
+                const float theta = phase + t * 2.0f * PI * (reverse ? -1.0f : 1.0f);
+                const float r = R * fabsf(cosf((float)k * theta));
+                const float u = cU + (r * cosf(theta)) / dstW;
+                const float v = cV + (r * sinf(theta)) / dstH;
+                if (i > 0) line(prevU, prevV, u, v);
+                prevU = u; prevV = v;
+            }
+        };
+        auto roseGroup = [&](float c) {
+            // Outer rose (8 petals, k=4)
+            rose(c, 0.5f, minSide * 0.38f, 4, 0.0f, false);
+            // Middle rose (6 petals, k=3), rotated
+            rose(c, 0.5f, minSide * 0.24f, 3, PI / 6.0f, true);
+            // Inner rose (4 petals, k=2)
+            rose(c, 0.5f, minSide * 0.13f, 2, 0.0f, false);
+            // Center dot
+            polystar(c, 0.5f,
+                     (minSide*0.025f)/dstW, (minSide*0.025f)/dstH,
+                     (minSide*0.020f)/dstW, (minSide*0.020f)/dstH,
+                     12, 0.0f, true);
+        };
+        roseGroup(cU_left);
+        roseGroup(cU_right);
+        if (drawChain) {
+            // Chain: tiny 4-petal roses
+            const float aVtop = (bandPx + minSide * 0.035f + minSide * 0.012f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 7;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                rose(uPos, aVtop, minSide * 0.033f, 2, 0.0f, false);
+                rose(uPos, aVbot, minSide * 0.033f, 2, 0.0f, true);
+            }
+        }
+    } else if (style == 14) {
+        // -------- Style 14: Peacock feather fan --------
+        // Long curved feathers radiating outward, each ending in an "eye"
+        // (a small floral cluster). Reads like a peacock's tail when seen
+        // from the medallion centre.
+        auto peacock = [&](float c) {
+            const int RAYS = 12;
+            const float featherLen = minSide * 0.42f;
+            const float featherHalfW = minSide * 0.040f;
+            const float eyeR = minSide * 0.060f;
+            for (int i = 0; i < RAYS; ++i) {
+                const float ang = (float)i * 2.0f * PI / (float)RAYS;
+                // Main feather body (long thin petal)
+                petal(c, 0.5f, ang,
+                      featherLen / dstW, featherLen / dstH,
+                      featherHalfW / dstW, featherHalfW / dstH, false);
+                // Eye at the tip
+                const float tipU = c + cosf(ang) * (featherLen * 0.88f) / dstW;
+                const float tipV = 0.5f + sinf(ang) * (featherLen * 0.88f) / dstH;
+                polystar(tipU, tipV,
+                         eyeR / dstW, eyeR / dstH,
+                         (eyeR * 0.45f) / dstW, (eyeR * 0.45f) / dstH,
+                         8, ang, false);
+                polystar(tipU, tipV,
+                         (eyeR * 0.45f) / dstW, (eyeR * 0.45f) / dstH,
+                         (eyeR * 0.25f) / dstW, (eyeR * 0.25f) / dstH,
+                         6, ang + PI / 6.0f, true);
+                polystar(tipU, tipV,
+                         (eyeR * 0.20f) / dstW, (eyeR * 0.20f) / dstH,
+                         (eyeR * 0.10f) / dstW, (eyeR * 0.10f) / dstH,
+                         4, ang, false);
+            }
+            // Central rosette
+            polystar(c, 0.5f,
+                     (minSide * 0.10f) / dstW, (minSide * 0.10f) / dstH,
+                     (minSide * 0.060f) / dstW, (minSide * 0.060f) / dstH,
+                     12, 0.0f, false);
+            polystar(c, 0.5f,
+                     (minSide * 0.055f) / dstW, (minSide * 0.055f) / dstH,
+                     (minSide * 0.030f) / dstW, (minSide * 0.030f) / dstH,
+                     8, PI / 8.0f, true);
+            polystar(c, 0.5f,
+                     (minSide * 0.025f) / dstW, (minSide * 0.025f) / dstH,
+                     (minSide * 0.012f) / dstW, (minSide * 0.012f) / dstH,
+                     6, 0.0f, false);
+        };
+        peacock(cU_left);
+        peacock(cU_right);
+        if (drawChain) {
+            const float aVtop = (bandPx + minSide * 0.030f + minSide * 0.012f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 9;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                // Mini 6-ray feather burst
+                for (int r = 0; r < 6; ++r) {
+                    const float ang = (float)r * 2.0f * PI / 6.0f;
+                    petal(uPos, aVtop, ang,
+                          (minSide*0.024f)/dstW, (minSide*0.024f)/dstH,
+                          (minSide*0.006f)/dstW, (minSide*0.006f)/dstH, false);
+                    petal(uPos, aVbot, ang,
+                          (minSide*0.024f)/dstW, (minSide*0.024f)/dstH,
+                          (minSide*0.006f)/dstW, (minSide*0.006f)/dstH, false);
+                }
+            }
+        }
+    } else if (style == 15) {
+        // -------- Style 15: Celtic interlace knot --------
+        // Three offset rings woven together via alternating in/out
+        // winding rules — gives a chained-loop / trefoil ornament feel.
+        // Each "ring" is approximated by a wavy polystar with many points.
+        auto interlace = [&](float c) {
+            const int RING_PTS = 60;
+            // Ring 1 (large, even ring at 0°)
+            polystar(c, 0.5f,
+                     (minSide * 0.36f) / dstW, (minSide * 0.36f) / dstH,
+                     (minSide * 0.31f) / dstW, (minSide * 0.31f) / dstH,
+                     RING_PTS, 0.0f, false);
+            polystar(c, 0.5f,
+                     (minSide * 0.34f) / dstW, (minSide * 0.34f) / dstH,
+                     (minSide * 0.30f) / dstW, (minSide * 0.30f) / dstH,
+                     RING_PTS, PI / (float)RING_PTS, true);
+            // Three trefoil loops offset around the centre, each a
+            // smaller wavy ring.
+            for (int t = 0; t < 3; ++t) {
+                const float ang = (float)t * 2.0f * PI / 3.0f - PI / 2.0f;
+                const float offsetR = minSide * 0.16f;
+                const float ringR   = minSide * 0.18f;
+                const float lU = c + cosf(ang) * offsetR / dstW;
+                const float lV = 0.5f + sinf(ang) * offsetR / dstH;
+                polystar(lU, lV,
+                         (ringR) / dstW, (ringR) / dstH,
+                         (ringR - minSide * 0.022f) / dstW,
+                         (ringR - minSide * 0.022f) / dstH,
+                         36, ang, false);
+                polystar(lU, lV,
+                         (ringR - minSide * 0.022f) / dstW,
+                         (ringR - minSide * 0.022f) / dstH,
+                         (ringR - minSide * 0.044f) / dstW,
+                         (ringR - minSide * 0.044f) / dstH,
+                         36, ang + PI / 36.0f, true);
+            }
+            // Centre boss
+            polystar(c, 0.5f,
+                     (minSide * 0.045f) / dstW, (minSide * 0.045f) / dstH,
+                     (minSide * 0.025f) / dstW, (minSide * 0.025f) / dstH,
+                     12, 0.0f, false);
+        };
+        interlace(cU_left);
+        interlace(cU_right);
+        if (drawChain) {
+            const float aVtop = (bandPx + minSide * 0.035f + minSide * 0.012f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 7;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                // Trefoil at each anchor
+                for (int j = 0; j < 3; ++j) {
+                    const float ang = (float)j * 2.0f * PI / 3.0f - PI / 2.0f;
+                    const float lU = uPos + cosf(ang) * (minSide * 0.020f) / dstW;
+                    polystar(lU, aVtop + sinf(ang) * (minSide * 0.020f) / dstH,
+                             (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
+                             (minSide*0.012f)/dstW, (minSide*0.012f)/dstH,
+                             12, ang, false);
+                    polystar(lU, aVbot + sinf(ang) * (minSide * 0.020f) / dstH,
+                             (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
+                             (minSide*0.012f)/dstW, (minSide*0.012f)/dstH,
+                             12, ang, false);
                 }
             }
         }
