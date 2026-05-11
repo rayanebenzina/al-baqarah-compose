@@ -276,7 +276,7 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
     // share the triple band above and emit two end medallions plus a
     // chain along the long edges, but the motifs differ — stars,
     // petals, sunburst rays, or interlaced girih shapes.
-    const int NUM_STYLES = 4;
+    const int NUM_STYLES = 7;
     const int style = ((unsigned)seed) % (unsigned)NUM_STYLES;
     LOGI("emitFrame: seed=%d style=%d", seed, style);
 
@@ -424,7 +424,7 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
                          R*0.85f/dstW, R*0.85f/dstH, 12, 0.0f, false);
             }
         }
-    } else {
+    } else if (style == 3) {
         // -------- Style 3: girih (3 overlapping rotated 8-point stars) --------
         auto girih = [&](float c) {
             // 3 overlapping 8-point stars, rotated 15° each = 24-rayed look
@@ -469,6 +469,230 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
                          R*0.4f/dstW, R*0.4f/dstH, pts, ph, false);
                 polystar(uPos, aVbot, R/dstW, R/dstH,
                          R*0.4f/dstW, R*0.4f/dstH, pts, ph, false);
+            }
+        }
+    } else if (style == 4) {
+        // -------- Style 4: Lotus — overlapping wide curved petals --------
+        // Wide fat petals are drawn at 3 ring sizes with rotation offsets
+        // so the outline reads like overlapping lotus petals rather than a
+        // pure star.
+        auto lotus = [&](float c) {
+            // Outer ring — 8 very wide petals
+            const float L1 = minSide * 0.40f, W1 = minSide * 0.085f;
+            for (int p = 0; p < 8; ++p) {
+                const float ang = (float)p * 2.0f * PI / 8.0f;
+                petal(c, 0.5f, ang, L1/dstW, L1/dstH, W1/dstW, W1/dstH, false);
+            }
+            // Middle ring — 8 petals rotated 22.5°, slightly shorter
+            const float L2 = minSide * 0.30f, W2 = minSide * 0.070f;
+            for (int p = 0; p < 8; ++p) {
+                const float ang = PI / 8.0f + (float)p * 2.0f * PI / 8.0f;
+                petal(c, 0.5f, ang, L2/dstW, L2/dstH, W2/dstW, W2/dstH, false);
+            }
+            // Inner ring — 6 small fat petals
+            const float L3 = minSide * 0.15f, W3 = minSide * 0.055f;
+            for (int p = 0; p < 6; ++p) {
+                const float ang = (float)p * 2.0f * PI / 6.0f;
+                petal(c, 0.5f, ang, L3/dstW, L3/dstH, W3/dstW, W3/dstH, false);
+            }
+            // Hole at the center, then a tiny pip
+            polystar(c, 0.5f, (minSide*0.038f)/dstW, (minSide*0.038f)/dstH,
+                     (minSide*0.034f)/dstW, (minSide*0.034f)/dstH, 16, 0.0f, true);
+            polystar(c, 0.5f, (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
+                     (minSide*0.014f)/dstW, (minSide*0.014f)/dstH, 8, 0.0f, false);
+        };
+        lotus(cU_left);
+        lotus(cU_right);
+        if (drawChain) {
+            // Chain: tiny lotus petal pairs (vertical + horizontal)
+            const float L = minSide * 0.040f, W = minSide * 0.022f;
+            const float aVtop = (bandPx + L + minSide * 0.010f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 11;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                for (int q = 0; q < 4; ++q) {
+                    const float ang = (float)q * PI * 0.5f + PI * 0.25f;
+                    petal(uPos, aVtop, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                    petal(uPos, aVbot, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                }
+            }
+        }
+    } else if (style == 5) {
+        // -------- Style 5: Spiral mandala — 6 curling arms from center --------
+        // Each arm is a chain of three quadratic Béziers following a
+        // logarithmic-ish spiral, with a mirrored return curve to close
+        // the arm into a filled shape.
+        auto spiralArm = [&](float c, float baseAngle, float maxRadiusPx,
+                              float startWidthPx, float endWidthPx) {
+            // Sample 4 points along the spiral curve. The arm tapers — at
+            // r=0 it's wide (startWidthPx), at r=max it's narrow (endWidthPx).
+            const int N = 4;
+            float lx[N + 1], ly[N + 1];  // left edge
+            float rx[N + 1], ry[N + 1];  // right edge
+            float midx[N + 1], midy[N + 1];
+            for (int i = 0; i <= N; ++i) {
+                const float t = (float)i / (float)N;
+                const float r = maxRadiusPx * t;
+                // Spiral: angle grows with radius. ~135° curl over the arm length.
+                const float ang = baseAngle + t * 2.4f;
+                const float w = startWidthPx + (endWidthPx - startWidthPx) * t;
+                const float ux = cosf(ang), uy = sinf(ang);
+                const float px = -uy, py = ux;
+                const float mx = (r * ux) / dstW;
+                const float my = (r * uy) / dstH;
+                midx[i] = c + mx;
+                midy[i] = 0.5f + my;
+                lx[i] = c + mx + (px * w) / dstW;
+                ly[i] = 0.5f + my + (py * w) / dstH;
+                rx[i] = c + mx - (px * w) / dstW;
+                ry[i] = 0.5f + my - (py * w) / dstH;
+            }
+            // Draw quadratic Béziers connecting consecutive midpoints,
+            // with control points sampled at offsets to give curvature.
+            // Outgoing along left edge: l0 -> l1 -> ... -> lN
+            // Then around the tip back along right edge.
+            for (int i = 0; i < N; ++i) {
+                // Control point = midpoint plus slight outward shift
+                const float ctrlX = (lx[i] + lx[i + 1]) * 0.5f;
+                const float ctrlY = (ly[i] + ly[i + 1]) * 0.5f;
+                curve(lx[i], ly[i], ctrlX, ctrlY, lx[i + 1], ly[i + 1]);
+            }
+            // Tip cap: curve from lN to rN via the midpoint at i=N
+            curve(lx[N], ly[N], midx[N], midy[N], rx[N], ry[N]);
+            for (int i = N; i > 0; --i) {
+                const float ctrlX = (rx[i] + rx[i - 1]) * 0.5f;
+                const float ctrlY = (ry[i] + ry[i - 1]) * 0.5f;
+                curve(rx[i], ry[i], ctrlX, ctrlY, rx[i - 1], ry[i - 1]);
+            }
+            // Base cap: curve from r0 back to l0 via center
+            curve(rx[0], ry[0], midx[0], midy[0], lx[0], ly[0]);
+        };
+        auto spiral = [&](float c) {
+            const int ARMS = 6;
+            const float maxR = minSide * 0.36f;
+            const float startW = minSide * 0.022f;
+            const float endW   = minSide * 0.012f;
+            for (int a = 0; a < ARMS; ++a) {
+                const float baseAng = (float)a * 2.0f * PI / (float)ARMS;
+                spiralArm(c, baseAng, maxR, startW, endW);
+            }
+            // Central disc + pip
+            polystar(c, 0.5f, (minSide*0.060f)/dstW, (minSide*0.060f)/dstH,
+                     (minSide*0.055f)/dstW, (minSide*0.055f)/dstH, 16, 0.0f, false);
+            polystar(c, 0.5f, (minSide*0.030f)/dstW, (minSide*0.030f)/dstH,
+                     (minSide*0.026f)/dstW, (minSide*0.026f)/dstH, 12, 0.0f, true);
+            polystar(c, 0.5f, (minSide*0.012f)/dstW, (minSide*0.012f)/dstH,
+                     (minSide*0.008f)/dstW, (minSide*0.008f)/dstH, 6, 0.0f, false);
+        };
+        spiral(cU_left);
+        spiral(cU_right);
+        if (drawChain) {
+            // Chain: small comma/curl marks alternating direction
+            const float armR = minSide * 0.040f;
+            const float aVtop = (bandPx + armR + minSide * 0.015f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 9;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                const float baseAng = (k & 1) ? PI * 0.25f : -PI * 0.25f;
+                spiralArm(uPos - aVtop * 0.0f, baseAng, armR,
+                          minSide * 0.012f, minSide * 0.006f);
+                spiralArm(uPos, baseAng + PI, armR,
+                          minSide * 0.012f, minSide * 0.006f);
+                // Mirror for bottom edge — shift via a fake center by
+                // re-using spiralArm at the bottom V band.
+                // Hack: call spiralArm twice for bottom positioning.
+                // Easier: draw a small dot since spirals get cluttered.
+                polystar(uPos, aVbot, armR*0.5f/dstW, armR*0.5f/dstH,
+                         armR*0.4f/dstW, armR*0.4f/dstH, 8, 0.0f, false);
+            }
+        }
+    } else if (style == 6) {
+        // -------- Style 6: S-scroll cartouche — 4 paired S-curves --------
+        // An "S" shape made of two quadratic curves; placed around the
+        // medallion center to form a baroque cartouche feel.
+        auto sScroll = [&](float c, float baseAngle, float reach, float thickness) {
+            // Define 4 points: p0 (start), p1 (first bend), p2 (mid), p3 (end)
+            const float dirU = cosf(baseAngle), dirV = sinf(baseAngle);
+            const float perpU = -sinf(baseAngle), perpV = cosf(baseAngle);
+            const float l = reach;
+            // Two ends of the S
+            const float p0u = c + (dirU * 0 - perpU * thickness * 0.5f) / dstW;
+            const float p0v = 0.5f + (dirV * 0 - perpV * thickness * 0.5f) / dstH;
+            const float pEu = c + (dirU * l + perpU * thickness * 0.5f) / dstW;
+            const float pEv = 0.5f + (dirV * l + perpV * thickness * 0.5f) / dstH;
+            // Control points: bulge OPPOSITE sides for the two halves of the S
+            const float qLu = c + (dirU * l * 0.25f + perpU * l * 0.6f) / dstW;
+            const float qLv = 0.5f + (dirV * l * 0.25f + perpV * l * 0.6f) / dstH;
+            const float qRu = c + (dirU * l * 0.75f - perpU * l * 0.6f) / dstW;
+            const float qRv = 0.5f + (dirV * l * 0.75f - perpV * l * 0.6f) / dstH;
+            // Lower edge (outgoing) and upper edge (return) make a closed strip
+            const float w = thickness * 0.5f;
+            const float p0uL = c + (dirU * 0 - perpU * w) / dstW;
+            const float p0vL = 0.5f + (dirV * 0 - perpV * w) / dstH;
+            const float p0uR = c + (dirU * 0 + perpU * w) / dstW;
+            const float p0vR = 0.5f + (dirV * 0 + perpV * w) / dstH;
+            const float pEuL = c + (dirU * l - perpU * w) / dstW;
+            const float pEvL = 0.5f + (dirV * l - perpV * w) / dstH;
+            const float pEuR = c + (dirU * l + perpU * w) / dstW;
+            const float pEvR = 0.5f + (dirV * l + perpV * w) / dstH;
+            // Two-curve S as a closed thin strip: bottom curve out, top curve back
+            curve(p0uL, p0vL, qLu, qLv, pEuL, pEvL);
+            curve(pEuL, pEvL, qRu, qRv, pEuR, pEvR);  // tip turn
+            curve(pEuR, pEvR, qRu, qRv, p0uR, p0vR);  // wait — closing path
+            curve(p0uR, p0vR, qLu, qLv, p0uL, p0vL);
+            // Suppress unused vars warning
+            (void)p0u; (void)p0v; (void)pEu; (void)pEv;
+        };
+        auto cartouche = [&](float c) {
+            // 4 S-scrolls arranged in a plus pattern, each curling outward
+            const float reach = minSide * 0.32f;
+            const float thick = minSide * 0.050f;
+            for (int q = 0; q < 4; ++q) {
+                const float ang = (float)q * PI * 0.5f;
+                sScroll(c, ang, reach, thick);
+            }
+            // 4 smaller S-scrolls at 45° angles
+            for (int q = 0; q < 4; ++q) {
+                const float ang = (float)q * PI * 0.5f + PI * 0.25f;
+                sScroll(c, ang, reach * 0.6f, thick * 0.7f);
+            }
+            // Center: layered star
+            polystar(c, 0.5f, (minSide*0.080f)/dstW, (minSide*0.080f)/dstH,
+                     (minSide*0.040f)/dstW, (minSide*0.040f)/dstH, 8, 0.0f, false);
+            polystar(c, 0.5f, (minSide*0.035f)/dstW, (minSide*0.035f)/dstH,
+                     (minSide*0.028f)/dstW, (minSide*0.028f)/dstH, 12, 0.0f, true);
+            polystar(c, 0.5f, (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
+                     (minSide*0.012f)/dstW, (minSide*0.012f)/dstH, 6, 0.0f, false);
+        };
+        cartouche(cU_left);
+        cartouche(cU_right);
+        if (drawChain) {
+            // Chain: alternating small S-scroll and dot
+            const float reach = minSide * 0.045f;
+            const float thick = minSide * 0.014f;
+            const float aVtop = (bandPx + thick + minSide * 0.020f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 9;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                if ((k & 1) == 0) {
+                    sScroll(uPos, 0.0f, reach, thick);
+                    sScroll(uPos, PI, reach, thick);
+                } else {
+                    polystar(uPos, aVtop,
+                             (minSide*0.020f)/dstW, (minSide*0.020f)/dstH,
+                             (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
+                             8, 0.0f, false);
+                    polystar(uPos, aVbot,
+                             (minSide*0.020f)/dstW, (minSide*0.020f)/dstH,
+                             (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
+                             8, 0.0f, false);
+                }
             }
         }
     }

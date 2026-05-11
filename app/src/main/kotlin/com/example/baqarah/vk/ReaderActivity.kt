@@ -199,7 +199,8 @@ class ReaderActivity : Activity() {
                 // frame (height = lineSpacingPx) against the top bar.
                 topMargin = headerHeightPx + lineSpacingPx * 0.7f
                 val s = SURAHS.firstOrNull { it.id == currentSurah }
-                title = s?.let { "${it.id}. ${it.nameSimple}" } ?: "Surah $currentSurah"
+                val baseTitle = s?.let { "${it.id}. ${it.nameSimple}" } ?: "Surah $currentSurah"
+                title = "$baseTitle  ·  style ${frameSeed % FRAME_STYLE_COUNT}"
             }
         }
         titleView.text = title
@@ -240,5 +241,7 @@ class ReaderActivity : Activity() {
         private const val BG_CREAM = 0xFFF5EAD2.toInt()        // matches Vulkan clear
         private const val BG_TOPBAR = 0xFFE9DCBE.toInt()       // slightly darker cream
         private const val INK_DARK = 0xFF281E14.toInt()        // matches glyph fallback
+        // Keep in sync with NUM_STYLES in jni_bridge.cpp emitFrame switch.
+        private const val FRAME_STYLE_COUNT = 7
     }
 }
