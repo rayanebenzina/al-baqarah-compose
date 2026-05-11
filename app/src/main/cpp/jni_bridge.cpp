@@ -330,9 +330,16 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
         // centering leaves them visibly off.
         const bool centerThisLine = (firstLineDecorate && ln == 0);
         float cursorX;
+        float lineBaselineY = baselineY;
         if (centerThisLine) {
             float inkLeft = std::numeric_limits<float>::infinity();
             float inkRight = -std::numeric_limits<float>::infinity();
+            // Vertical extent in pixels above the baseline (positive = up).
+            // inkTopPx = top of ink, inkBotPx = bottom of ink. We collect
+            // both so we can shift the baseline and land the ink's vertical
+            // center at the frame's vertical center.
+            float inkTopPx = -std::numeric_limits<float>::infinity();
+            float inkBotPx = std::numeric_limits<float>::infinity();
             float probeX = 0.0f;  // synthetic origin
             for (int i = lss[ln]; i < lss[ln + 1]; ++i) {
                 const int fi = fis[(size_t)i];
@@ -346,11 +353,15 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
                 probeX -= (float)advance * scale;
                 int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
                 stbtt_GetGlyphBox(&font.info, gid, &x0, &y0, &x1, &y1);
-                if (x1 > x0) {
+                if (x1 > x0 && y1 > y0) {
                     const float l = probeX + (float)x0 * scale;
                     const float r = probeX + (float)x1 * scale;
                     if (l < inkLeft)  inkLeft  = l;
                     if (r > inkRight) inkRight = r;
+                    const float t = (float)y1 * scale;
+                    const float b = (float)y0 * scale;
+                    if (t > inkTopPx) inkTopPx = t;
+                    if (b < inkBotPx) inkBotPx = b;
                 }
             }
             const float frameCenterX = (minX + maxX) * 0.5f;
@@ -359,6 +370,13 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
                 cursorX = frameCenterX - inkCenterX;  // shift so ink center = frame center
             } else {
                 cursorX = frameCenterX + scaledWidthPx * 0.5f;
+            }
+            // Frame center Y: frameY = baselineY − 0.7·lineSpacing,
+            // frameH = lineSpacing → center = baselineY − 0.2·lineSpacing.
+            // Override the baseline so ink center lands there.
+            const float frameCenterY = baselineY - lineSpacingPx * 0.2f;
+            if (std::isfinite(inkTopPx) && std::isfinite(inkBotPx)) {
+                lineBaselineY = frameCenterY + (inkTopPx + inkBotPx) * 0.5f;
             }
         } else {
             cursorX = maxX;
@@ -390,7 +408,7 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
 
             if (bw > 0.0f && bh > 0.0f) {
                 const float dstX = cursorX + (float)x0 * scale;
-                const float dstY = baselineY - (float)y1 * scale;
+                const float dstY = lineBaselineY - (float)y1 * scale;
                 const float dstW = bw * scale;
                 const float dstH = bh * scale;
 
