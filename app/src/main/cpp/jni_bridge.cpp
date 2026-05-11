@@ -145,9 +145,11 @@ bool initFontHandle(JNIEnv* env, jbyteArray ba, FontHandle& out) {
 //     cancels the inner hole — non-zero / even-odd both render them as
 //     filled either way.
 //
-// Stroke width and diamond size scale off the short dimension so the
-// stroke band stays visually balanced when the frame is much wider
-// than tall.
+// Mushaf-style surah-title frame: triple stroke (outer thick, middle,
+// inner thin) with twelve-pointed corner stars, eight-pointed end
+// medallions, and small six-pointed accents along the long edges. All
+// curve sizes are derived from the short dimension so the design stays
+// visually consistent at any aspect ratio.
 void emitFrame(float dstX, float dstY, float dstW, float dstH,
                uint32_t color,
                std::vector<float>& allCurves,
@@ -158,14 +160,15 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
                int& totalCurves,
                int& totalLayers) {
     const float minSide  = std::min(dstW, dstH);
-    const float strokePx = minSide * 0.06f;
-    const float ornamentPx = minSide * 0.16f;
-    // Diamonds sit just inside the stroke, in the open corner.
-    const float ornamentInsetPx = strokePx + ornamentPx * 0.75f;
 
-    const float sU  = strokePx / dstW,  sV  = strokePx / dstH;
-    const float dU  = ornamentPx / dstW, dV  = ornamentPx / dstH;
-    const float diU = ornamentInsetPx / dstW, diV = ornamentInsetPx / dstH;
+    // Triple band: outer thick + gap + middle + gap + inner thin.
+    const float strokeOuterPx = minSide * 0.045f;
+    const float gapOMPx       = minSide * 0.030f;
+    const float strokeMidPx   = minSide * 0.020f;
+    const float gapMIPx       = minSide * 0.015f;
+    const float strokeInnerPx = minSide * 0.010f;
+    const float bandPx = strokeOuterPx + gapOMPx + strokeMidPx +
+                         gapMIPx + strokeInnerPx;
 
     const int curveStart = totalCurves;
 
@@ -178,33 +181,131 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
     auto line = [&](float x0, float y0, float x1, float y1) {
         curve(x0, y0, (x0 + x1) * 0.5f, (y0 + y1) * 0.5f, x1, y1);
     };
-
-    // Outer rectangle, CCW: bottom → right → top → left.
-    line(0.0f, 0.0f, 1.0f, 0.0f);
-    line(1.0f, 0.0f, 1.0f, 1.0f);
-    line(1.0f, 1.0f, 0.0f, 1.0f);
-    line(0.0f, 1.0f, 0.0f, 0.0f);
-
-    // Inner rectangle, CW (reversed). Offset by stroke on every side
-    // so the band has uniform thickness.
-    line(1.0f - sU, sV,        sU,        sV);
-    line(sU,        sV,        sU,        1.0f - sV);
-    line(sU,        1.0f - sV, 1.0f - sU, 1.0f - sV);
-    line(1.0f - sU, 1.0f - sV, 1.0f - sU, sV);
-
-    // Four corner diamonds (small filled lozenges) inside the inner
-    // rectangle. Path goes top → right → bottom → left.
-    auto diamond = [&](float cx, float cy) {
-        const float hu = dU * 0.5f, hv = dV * 0.5f;
-        line(cx,      cy + hv, cx + hu, cy);
-        line(cx + hu, cy,      cx,      cy - hv);
-        line(cx,      cy - hv, cx - hu, cy);
-        line(cx - hu, cy,      cx,      cy + hv);
+    // CCW outer outline (in UV space; with v=0 at top, this traces
+    // top → right → bottom → left and produces a filled body under
+    // non-zero winding).
+    auto rectOuter = [&](float u0, float v0, float u1, float v1) {
+        line(u0, v0, u1, v0);
+        line(u1, v0, u1, v1);
+        line(u1, v1, u0, v1);
+        line(u0, v1, u0, v0);
     };
-    diamond(sU + diU,         sV + diV);
-    diamond(1.0f - sU - diU,  sV + diV);
-    diamond(1.0f - sU - diU,  1.0f - sV - diV);
-    diamond(sU + diU,         1.0f - sV - diV);
+    // Opposite winding — cuts a hole inside the surrounding outer rect.
+    auto rectHole = [&](float u0, float v0, float u1, float v1) {
+        line(u1, v0, u0, v0);
+        line(u0, v0, u0, v1);
+        line(u0, v1, u1, v1);
+        line(u1, v1, u1, v0);
+    };
+
+    // -------- Triple stroke bands --------
+    {
+        const float sU = strokeOuterPx / dstW, sV = strokeOuterPx / dstH;
+        rectOuter(0.0f, 0.0f, 1.0f, 1.0f);
+        rectHole(sU, sV, 1.0f - sU, 1.0f - sV);
+    }
+    {
+        const float offPx = strokeOuterPx + gapOMPx;
+        const float oU = offPx / dstW, oV = offPx / dstH;
+        const float sU = strokeMidPx / dstW, sV = strokeMidPx / dstH;
+        rectOuter(oU, oV, 1.0f - oU, 1.0f - oV);
+        rectHole(oU + sU, oV + sV, 1.0f - oU - sU, 1.0f - oV - sV);
+    }
+    {
+        const float offPx = strokeOuterPx + gapOMPx + strokeMidPx + gapMIPx;
+        const float oU = offPx / dstW, oV = offPx / dstH;
+        const float sU = strokeInnerPx / dstW, sV = strokeInnerPx / dstH;
+        rectOuter(oU, oV, 1.0f - oU, 1.0f - oV);
+        rectHole(oU + sU, oV + sV, 1.0f - oU - sU, 1.0f - oV - sV);
+    }
+
+    // -------- Ornaments --------
+    // polystar lays down N*2 line segments alternating between an outer
+    // and an inner radius, producing a filled N-pointed star.
+    auto polystar = [&](float cxU, float cyV,
+                         float ruOut, float rvOut, float ruIn, float rvIn,
+                         int points, float phase) {
+        const int N = points * 2;
+        float prevX = 0.0f, prevY = 0.0f;
+        for (int i = 0; i <= N; ++i) {
+            const float ang = phase + (float)i * 3.14159265f / (float)points;
+            const bool isOut = (i & 1) == 0;
+            const float ru = isOut ? ruOut : ruIn;
+            const float rv = isOut ? rvOut : rvIn;
+            const float x = cxU + cosf(ang) * ru;
+            const float y = cyV + sinf(ang) * rv;
+            if (i > 0) line(prevX, prevY, x, y);
+            prevX = x; prevY = y;
+        }
+    };
+
+    // Four corner 12-pointed stars sit just inside the innermost band.
+    const float cornerOutPx = minSide * 0.13f;
+    const float cornerInPx  = minSide * 0.052f;
+    const float cornerInsetPx = bandPx + cornerOutPx + minSide * 0.015f;
+    {
+        const float roU = cornerOutPx / dstW, roV = cornerOutPx / dstH;
+        const float riU = cornerInPx  / dstW, riV = cornerInPx  / dstH;
+        const float cU  = cornerInsetPx / dstW, cV  = cornerInsetPx / dstH;
+        const float phase = 3.14159265f / 12.0f;  // a tip points up
+        polystar(cU,        cV,        roU, roV, riU, riV, 12, phase);
+        polystar(1.0f - cU, cV,        roU, roV, riU, riV, 12, phase);
+        polystar(1.0f - cU, 1.0f - cV, roU, roV, riU, riV, 12, phase);
+        polystar(cU,        1.0f - cV, roU, roV, riU, riV, 12, phase);
+    }
+
+    // Two end medallions at the vertical centers of the short edges.
+    // 8-pointed star + smaller 8-pointed star rotated 22.5° on top —
+    // overlapping CCW stars stay filled under non-zero winding and
+    // produce a 16-rayed look.
+    const float medOutPx  = minSide * 0.18f;
+    const float medMidPx  = minSide * 0.075f;
+    const float medCorePx = minSide * 0.085f;
+    const float medCoreInPx = minSide * 0.040f;
+    const float medInsetPxU = bandPx + medOutPx + minSide * 0.030f;
+    {
+        const float roU = medOutPx / dstW,  roV = medOutPx / dstH;
+        const float riU = medMidPx / dstW,  riV = medMidPx / dstH;
+        const float coreOutU = medCorePx / dstW, coreOutV = medCorePx / dstH;
+        const float coreInU  = medCoreInPx / dstW, coreInV = medCoreInPx / dstH;
+        const float cU = medInsetPxU / dstW;
+        polystar(cU,        0.5f, roU, roV, riU, riV, 8, 0.0f);
+        polystar(cU,        0.5f, roU, roV, riU, riV, 8, 3.14159265f / 8.0f);
+        polystar(cU,        0.5f, coreOutU, coreOutV, coreInU, coreInV, 6, 0.0f);
+        polystar(1.0f - cU, 0.5f, roU, roV, riU, riV, 8, 0.0f);
+        polystar(1.0f - cU, 0.5f, roU, roV, riU, riV, 8, 3.14159265f / 8.0f);
+        polystar(1.0f - cU, 0.5f, coreOutU, coreOutV, coreInU, coreInV, 6, 0.0f);
+    }
+
+    // Small 6-pointed accents along the long top/bottom edges, between
+    // the corner ornaments. Skipped on near-square frames where they'd
+    // crowd the corners.
+    const float accentOutPx = minSide * 0.045f;
+    const float accentInPx  = minSide * 0.020f;
+    const float accentInsetVPx = bandPx + accentOutPx + minSide * 0.010f;
+    const float topOpenUPx = dstW * 0.5f -
+                             (cornerInsetPx + cornerOutPx) -
+                             (medInsetPxU + medOutPx);
+    if (topOpenUPx > minSide * 0.20f) {
+        const float roU = accentOutPx / dstW, roV = accentOutPx / dstH;
+        const float riU = accentInPx  / dstW, riV = accentInPx  / dstH;
+        const float aV = accentInsetVPx / dstH;
+        // Two accents between left medallion and corner top/bottom, two
+        // between right medallion and corner — total 4 per long edge.
+        const float leftSpanLowU  = (cornerInsetPx + cornerOutPx) / dstW;
+        const float leftSpanHighU = (medInsetPxU - medOutPx) / dstW;
+        const float rightSpanLowU  = 1.0f - (medInsetPxU - medOutPx) / dstW;
+        const float rightSpanHighU = 1.0f - (cornerInsetPx + cornerOutPx) / dstW;
+        for (int k = 0; k < 2; ++k) {
+            const float tL = (float)(k + 1) / 3.0f;
+            const float uL = leftSpanLowU + tL * (leftSpanHighU - leftSpanLowU);
+            const float uR = rightSpanLowU + tL * (rightSpanHighU - rightSpanLowU);
+            polystar(uL, aV,        roU, roV, riU, riV, 6, 0.0f);
+            polystar(uR, aV,        roU, roV, riU, riV, 6, 0.0f);
+            polystar(uL, 1.0f - aV, roU, roV, riU, riV, 6, 0.0f);
+            polystar(uR, 1.0f - aV, roU, roV, riU, riV, 6, 0.0f);
+        }
+    }
 
     const int curveCount = totalCurves - curveStart;
 
