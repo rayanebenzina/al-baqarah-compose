@@ -129,6 +129,127 @@ bool initFontHandle(JNIEnv* env, jbyteArray ba, FontHandle& out) {
     return true;
 }
 
+// Procedural Mushaf-style frame around a title glyph, emitted as one
+// extra COLR layer through the existing Slug outline pipeline.
+//
+// Curves are quadratic Béziers in UV [0,1]² (Y-up to match TTF
+// convention; the vertex shader flips quad.v so this still maps to a
+// Y-down screen rect). Three shapes share the layer:
+//
+//   - **Outer rounded rectangle, CCW**: contributes +1 winding inside.
+//   - **Inner rounded rectangle, CW**: contributes −1, cutting a hole
+//     to leave only the stroke band filled.
+//   - **Four corner diamonds**: small filled lozenges sitting inside the
+//     inner rect, near the corners. Their winding either reinforces or
+//     cancels the inner hole — non-zero / even-odd both render them as
+//     filled either way.
+//
+// Corner radius, stroke width, and diamond size are kept circular even
+// when the frame is wide by scaling u and v independently from a single
+// pixel measurement (so a thin tall frame and a fat short frame both
+// produce visually correct round corners).
+void emitFrame(float dstX, float dstY, float dstW, float dstH,
+               uint32_t color,
+               std::vector<float>& allCurves,
+               std::vector<float>& layerData,
+               std::vector<float>& layerRects,
+               std::vector<int>& bandsArr,
+               std::vector<int>& curveIndicesArr,
+               int& totalCurves,
+               int& totalLayers) {
+    // Geometry is sized off the short dimension so corner curves stay
+    // visually circular when the frame is much wider than tall.
+    const float minSide  = std::min(dstW, dstH);
+    const float cornerPx = minSide * 0.20f;
+    const float strokePx = minSide * 0.06f;
+    const float ornamentPx = minSide * 0.16f;
+    // Place diamonds *past* the inner rounded corner so they sit
+    // squarely inside the open interior, not on top of the stroke.
+    const float ornamentInsetPx = cornerPx + ornamentPx * 0.5f + strokePx * 0.5f;
+
+    const float rU  = cornerPx / dstW,  rV  = cornerPx / dstH;
+    const float sU  = strokePx / dstW,  sV  = strokePx / dstH;
+    const float r2U = std::max(0.0f, rU - sU);
+    const float r2V = std::max(0.0f, rV - sV);
+    const float dU  = ornamentPx / dstW, dV  = ornamentPx / dstH;
+    const float diU = ornamentInsetPx / dstW, diV = ornamentInsetPx / dstH;
+
+    const int curveStart = totalCurves;
+
+    auto curve = [&](float x0, float y0, float x1, float y1, float x2, float y2) {
+        allCurves.push_back(x0); allCurves.push_back(y0);
+        allCurves.push_back(x1); allCurves.push_back(y1);
+        allCurves.push_back(x2); allCurves.push_back(y2);
+        ++totalCurves;
+    };
+    auto line = [&](float x0, float y0, float x1, float y1) {
+        curve(x0, y0, (x0 + x1) * 0.5f, (y0 + y1) * 0.5f, x1, y1);
+    };
+
+    // Outer rounded rect, CCW: bottom → BR → right → TR → top → TL →
+    // left → BL. Each corner is a single quadratic Bézier with the
+    // control point at the geometric corner (approximates a quarter
+    // circle to within a few percent — fine at this size).
+    line (rU,        0.0f,      1.0f - rU, 0.0f);
+    curve(1.0f - rU, 0.0f,      1.0f,      0.0f,      1.0f,      rV);
+    line (1.0f,      rV,        1.0f,      1.0f - rV);
+    curve(1.0f,      1.0f - rV, 1.0f,      1.0f,      1.0f - rU, 1.0f);
+    line (1.0f - rU, 1.0f,      rU,        1.0f);
+    curve(rU,        1.0f,      0.0f,      1.0f,      0.0f,      1.0f - rV);
+    line (0.0f,      1.0f - rV, 0.0f,      rV);
+    curve(0.0f,      rV,        0.0f,      0.0f,      rU,        0.0f);
+
+    // Inner rounded rect, CW (reversed): bottom←leftward, BL, left↑,
+    // TL, top→right, TR, right↓, BR. Offset by stroke; corner radius
+    // shrinks by the stroke so the band has uniform thickness.
+    line (1.0f - sU - r2U, sV,            sU + r2U,        sV);
+    curve(sU + r2U,        sV,            sU,              sV,              sU,              sV + r2V);
+    line (sU,              sV + r2V,      sU,              1.0f - sV - r2V);
+    curve(sU,              1.0f - sV - r2V, sU,            1.0f - sV,       sU + r2U,        1.0f - sV);
+    line (sU + r2U,        1.0f - sV,     1.0f - sU - r2U, 1.0f - sV);
+    curve(1.0f - sU - r2U, 1.0f - sV,     1.0f - sU,       1.0f - sV,       1.0f - sU,       1.0f - sV - r2V);
+    line (1.0f - sU,       1.0f - sV - r2V, 1.0f - sU,     sV + r2V);
+    curve(1.0f - sU,       sV + r2V,      1.0f - sU,       sV,              1.0f - sU - r2U, sV);
+
+    // Four corner diamonds (small filled lozenges) inside the inner
+    // rectangle. Path goes top → right → bottom → left.
+    auto diamond = [&](float cx, float cy) {
+        const float hu = dU * 0.5f, hv = dV * 0.5f;
+        line(cx,      cy + hv, cx + hu, cy);
+        line(cx + hu, cy,      cx,      cy - hv);
+        line(cx,      cy - hv, cx - hu, cy);
+        line(cx - hu, cy,      cx,      cy + hv);
+    };
+    diamond(sU + diU,         sV + diV);
+    diamond(1.0f - sU - diU,  sV + diV);
+    diamond(1.0f - sU - diU,  1.0f - sV - diV);
+    diamond(sU + diU,         1.0f - sV - diV);
+
+    const int curveCount = totalCurves - curveStart;
+
+    // Layer header: curveOffset, curveCount, _, _, r, g, b, a (8 floats).
+    layerData.push_back((float)curveStart);
+    layerData.push_back((float)curveCount);
+    layerData.push_back(0.0f); layerData.push_back(0.0f);
+    const float a  = ((color >> 24) & 0xFF) / 255.0f;
+    const float rC = ((color >> 16) & 0xFF) / 255.0f;
+    const float gC = ((color >> 8)  & 0xFF) / 255.0f;
+    const float bC = ( color        & 0xFF) / 255.0f;
+    layerData.push_back(rC);
+    layerData.push_back(gC);
+    layerData.push_back(bC);
+    layerData.push_back(a);
+
+    appendLayerBands(allCurves, curveStart, curveCount, bandsArr, curveIndicesArr);
+
+    layerRects.push_back(dstX);
+    layerRects.push_back(dstY);
+    layerRects.push_back(dstW);
+    layerRects.push_back(dstH);
+
+    ++totalLayers;
+}
+
 }  // namespace
 
 // Multi-font, Mushaf-line RTL layout. Each codepoint picks its TTF by
@@ -137,7 +258,10 @@ bool initFontHandle(JNIEnv* env, jbyteArray ba, FontHandle& out) {
 // codepoint count). QPC v4 glyph advances are calibrated for the specific
 // Mushaf line a glyph appears on (including stretched kashida variants for
 // justification), so each line must be rendered on its own screen row with
-// no soft-wrapping. Returns total content height in px, or -1 on error.
+// no soft-wrapping. If `firstLineDecorate` is non-zero, the first line is
+// centered horizontally (instead of right-aligned RTL) and a procedural
+// Mushaf-style frame is drawn around it via `emitFrame`. Returns total
+// content height in px, or -1 on error.
 extern "C" JNIEXPORT jfloat JNICALL
 Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
     JNIEnv* env, jobject, jlong handle,
@@ -145,7 +269,8 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
     jintArray codepoints, jintArray fontIndices, jintArray lineStarts,
     jfloat screenWidthPx, jfloat leftMarginPx, jfloat rightMarginPx,
     jfloat topMarginPx, jfloat fontSizePx,
-    jfloat lineSpacingPx) {
+    jfloat lineSpacingPx,
+    jboolean firstLineDecorate) {
     auto* r = asRenderer(handle);
     if (!r || !ttfs || !codepoints || !fontIndices || !lineStarts) return -1.0f;
 
@@ -211,8 +336,18 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
         const float lineFs = (naturalWidthPx > usableWidth && naturalWidthPx > 0.0f)
                                  ? fontSizePx * (usableWidth / naturalWidthPx)
                                  : fontSizePx;
+        // Line width at the chosen lineFs (advances scale linearly with fs).
+        const float scaledWidthPx = naturalWidthPx > 0.0f
+                                        ? naturalWidthPx * (lineFs / fontSizePx)
+                                        : 0.0f;
 
-        float cursorX = maxX;
+        // Line 0 in surah mode (when decorated) is centered, not RTL
+        // right-aligned, so the surah-name plate sits in the middle of
+        // the frame we'll emit after the glyph(s).
+        const bool centerThisLine = (firstLineDecorate && ln == 0);
+        float cursorX = centerThisLine
+                            ? (minX + maxX) * 0.5f + scaledWidthPx * 0.5f
+                            : maxX;
 
         for (int i = lss[ln]; i < lss[ln + 1]; ++i) {
             const int cp = cps[(size_t)i];
@@ -287,6 +422,25 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
                     ++totalLayers;
                 }
             }
+        }
+
+        // After the title glyph(s) are laid out, draw a Mushaf-style
+        // frame around line 0. The frame fills the full screen width and
+        // occupies exactly one line-spacing vertically — flush against
+        // the top bar (line 0's top edge = top of canvas viewport), and
+        // its bottom is the baseline of line 1 minus the same gap.
+        if (centerThisLine) {
+            const float frameHeightPx = lineSpacingPx;
+            const float frameX = 0.0f;
+            const float frameWidthPx = screenWidthPx;
+            // Line 0's top edge sits ~0.7 line-heights above the
+            // baseline (matches the topMargin set by the host activity).
+            const float frameY = baselineY - lineSpacingPx * 0.7f;
+            emitFrame(frameX, frameY, frameWidthPx, frameHeightPx,
+                      0xFF281E14u,  // dark warm brown, matches glyph fallback
+                      allCurves, layerData, layerRects,
+                      bandsArr, curveIndicesArr,
+                      totalCurves, totalLayers);
         }
 
         baselineY += lineSpacingPx;

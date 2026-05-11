@@ -46,8 +46,10 @@ class NativeRenderer {
      * into Mushaf-page lines (last entry = total codepoint count). Each
      * line is laid out on its own screen row using the glyphs' natural
      * advances — QPC v4 glyph metrics are calibrated per Mushaf line.
-     * Returns the total content height in pixels (use to size the scroll
-     * range), or -1 on failure.
+     * If `firstLineDecorate` is true the first line is centered and a
+     * procedural Mushaf-style frame is drawn around it. Returns the
+     * total content height in pixels (use to size the scroll range), or
+     * -1 on failure.
      */
     fun uploadColrSurah(
         ttfs: Array<ByteArray>,
@@ -55,10 +57,11 @@ class NativeRenderer {
         screenWidthPx: Float, leftMarginPx: Float, rightMarginPx: Float,
         topMarginPx: Float, fontSizePx: Float,
         lineSpacingPx: Float,
+        firstLineDecorate: Boolean,
     ): Float = nUploadColrSurah(
         handle, ttfs, codepoints, fontIndices, lineStarts,
         screenWidthPx, leftMarginPx, rightMarginPx, topMarginPx, fontSizePx,
-        lineSpacingPx,
+        lineSpacingPx, firstLineDecorate,
     )
 
     fun release() {
@@ -89,5 +92,6 @@ class NativeRenderer {
         screenWidthPx: Float, leftMarginPx: Float, rightMarginPx: Float,
         topMarginPx: Float, fontSizePx: Float,
         lineSpacingPx: Float,
+        firstLineDecorate: Boolean,
     ): Float
 }

@@ -70,10 +70,10 @@ object MushafLoader {
             fatihaVerses.firstOrNull()?.words?.filter { it.charTypeName == "word" }
                 .orEmpty()
         } else emptyList()
-        // QuranTitles font: one ornate name-plate glyph per surah, taken
-        // from quran/quran_android. Codepoint convention is `0xFB8D + i`
-        // with a 0x21 jump after the 37th glyph (skips a TTF reserved
-        // range).
+        // quran_titles.ttf (from quran/quran_android): ornate calligraphic
+        // name-plate, one glyph per surah. Codepoint convention is
+        // `0xFB8D + (surah-1)` with a 0x21 jump after the 37th glyph
+        // (skips a TTF range the font reserves elsewhere).
         val titleAsset: ByteArray = withContext(Dispatchers.IO) {
             app.assets.open("quran_titles.ttf").use { it.readBytes() }
         }

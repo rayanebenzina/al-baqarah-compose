@@ -186,6 +186,9 @@ class ReaderActivity : Activity() {
             Mode.Surah -> {
                 fontSizePx = 80f
                 lineSpacingPx = fontSizePx * 2.6f
+                // Line 0's top edge = baseline − 0.7·lineSpacing. Setting
+                // topMargin to that exact gap flushes the procedural
+                // frame (height = lineSpacingPx) against the top bar.
                 topMargin = headerHeightPx + lineSpacingPx * 0.7f
                 val s = SURAHS.firstOrNull { it.id == currentSurah }
                 title = s?.let { "${it.id}. ${it.nameSimple}" } ?: "Surah $currentSurah"
@@ -211,6 +214,7 @@ class ReaderActivity : Activity() {
                     topMarginPx = topMargin,
                     fontSizePx = fontSizePx,
                     lineSpacingPx = lineSpacingPx,
+                    firstLineDecorate = (mode == Mode.Surah),
                 ) { totalHeightPx ->
                     canvas.scrollEnabled = (mode == Mode.Surah)
                     canvas.setContentHeight(totalHeightPx)
