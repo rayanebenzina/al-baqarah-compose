@@ -191,6 +191,21 @@ class VulkanCanvasView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * Cheap re-render with a different frame seed. The C++ side reuses
+     * the cached glyph data from the last setColrSurah call, so this
+     * skips the ~6.9k stbtt extractions and feels instant. Returns
+     * false if the cache is empty — caller should do a full
+     * setColrSurah then.
+     */
+    fun updateFrameSeed(frameSeed: Int, onResult: (Boolean) -> Unit = {}) {
+        renderHandler.post {
+            val ok = surfaceReady.get() && renderer.updateFrameSeed(frameSeed)
+            if (ok) requestRedraw()
+            post { onResult(ok) }
+        }
+    }
+
     fun setContentHeight(totalContentPx: Float) {
         maxScrollY = maxOf(0f, totalContentPx - height.toFloat())
         scrollY = scrollY.coerceIn(0f, maxScrollY)

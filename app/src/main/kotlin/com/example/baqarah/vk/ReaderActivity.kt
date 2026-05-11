@@ -104,7 +104,17 @@ class ReaderActivity : Activity() {
             setOnClickListener {
                 if (mode == Mode.Surah) {
                     frameSeed += 1
-                    loadCurrent()
+                    val s = SURAHS.firstOrNull { it.id == currentSurah }
+                    val baseTitle = s?.let { "${it.id}. ${it.nameSimple}" }
+                        ?: "Surah $currentSurah"
+                    text = "$baseTitle  ·  style ${frameSeed % FRAME_STYLE_COUNT}"
+                    // Fast path: the C++ cache lets us swap the frame
+                    // layer without re-extracting the surah's glyphs.
+                    // Falls back to a full reload only if the cache is
+                    // empty (shouldn't happen mid-session).
+                    canvas.updateFrameSeed(frameSeed) { ok ->
+                        if (!ok) loadCurrent()
+                    }
                 }
             }
         }

@@ -65,6 +65,15 @@ class NativeRenderer {
         lineSpacingPx, firstLineDecorate, frameSeed,
     )
 
+    /**
+     * Fast path for changing the procedural frame seed on the surah
+     * that was last uploaded. Reuses the cached post-glyph state and
+     * only re-emits the frame layer. Returns false if the cache is
+     * missing — the caller should then do a full uploadColrSurah.
+     */
+    fun updateFrameSeed(frameSeed: Int): Boolean =
+        nUpdateFrameSeed(handle, frameSeed)
+
     fun release() {
         if (handle != 0L) {
             nDestroy(handle)
@@ -96,4 +105,5 @@ class NativeRenderer {
         firstLineDecorate: Boolean,
         frameSeed: Int,
     ): Float
+    private external fun nUpdateFrameSeed(handle: Long, frameSeed: Int): Boolean
 }

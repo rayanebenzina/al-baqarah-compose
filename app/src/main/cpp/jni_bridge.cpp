@@ -1635,6 +1635,31 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
     ++totalLayers;
 }
 
+// Cached state of the last nUploadColrSurah call, captured after the
+// surah glyphs are emitted but *before* the procedural frame is added.
+// nUpdateFrameSeed restores from this snapshot, re-emits the frame
+// layer with a new seed, and re-uploads — skipping the ~6.9k stbtt
+// glyph extractions that dominate a full surah upload.
+struct SurahFrameCache {
+    bool valid = false;
+    // Geometry needed to re-emit the frame.
+    float frameX = 0.0f, frameY = 0.0f, frameW = 0.0f, frameH = 0.0f;
+    // Renderer handle the cache was built for. Cache is invalidated if
+    // the handle changes (e.g. activity rebuilt).
+    VkRenderer* renderer = nullptr;
+    // Snapshot of arrays at the moment the surah glyphs were complete.
+    // emitFrame's curves/layer/bands are *not* in here — they are added
+    // anew on every update so the seed can change.
+    std::vector<float> allCurves;
+    std::vector<float> layerData;
+    std::vector<float> layerRects;
+    std::vector<int>   bandsArr;
+    std::vector<int>   curveIndicesArr;
+    int totalCurves = 0;
+    int totalLayers = 0;
+};
+static SurahFrameCache g_surahCache;
+
 }  // namespace
 
 // Multi-font, Mushaf-line RTL layout. Each codepoint picks its TTF by
@@ -1700,6 +1725,8 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
     const float usableWidth = maxX - minX;
     float baselineY = topMarginPx;
     const int numLines = (int)lsCount - 1;
+    // Baseline of line 0 — captured for the post-loop frame emission.
+    const float line0Baseline = baselineY;
 
     for (int ln = 0; ln < numLines; ++ln) {
         // First pass: compute the line's natural width at fontSizePx, so we
@@ -1861,27 +1888,41 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
             }
         }
 
-        // After the title glyph(s) are laid out, draw a Mushaf-style
-        // frame around line 0. The frame fills the full screen width and
-        // occupies exactly one line-spacing vertically — flush against
-        // the top bar (line 0's top edge = top of canvas viewport), and
-        // its bottom is the baseline of line 1 minus the same gap.
-        if (centerThisLine) {
-            const float frameHeightPx = lineSpacingPx;
-            const float frameX = 0.0f;
-            const float frameWidthPx = screenWidthPx;
-            // Line 0's top edge sits ~0.7 line-heights above the
-            // baseline (matches the topMargin set by the host activity).
-            const float frameY = baselineY - lineSpacingPx * 0.7f;
-            emitFrame(frameX, frameY, frameWidthPx, frameHeightPx,
-                      0xFF281E14u,  // dark warm brown, matches glyph fallback
-                      allCurves, layerData, layerRects,
-                      bandsArr, curveIndicesArr,
-                      totalCurves, totalLayers,
-                      (int)frameSeed);
-        }
-
         baselineY += lineSpacingPx;
+    }
+
+    // Snapshot the post-glyph state for the fast-path style swap. The
+    // frame is appended below, so the cache holds the surah-only data
+    // exactly as it stood here.
+    if (firstLineDecorate) {
+        g_surahCache.renderer = r;
+        g_surahCache.allCurves = allCurves;
+        g_surahCache.layerData = layerData;
+        g_surahCache.layerRects = layerRects;
+        g_surahCache.bandsArr = bandsArr;
+        g_surahCache.curveIndicesArr = curveIndicesArr;
+        g_surahCache.totalCurves = totalCurves;
+        g_surahCache.totalLayers = totalLayers;
+        g_surahCache.frameW = screenWidthPx;
+        g_surahCache.frameH = lineSpacingPx;
+        g_surahCache.frameX = 0.0f;
+        g_surahCache.frameY = line0Baseline - lineSpacingPx * 0.7f;
+        g_surahCache.valid = true;
+    } else {
+        g_surahCache.valid = false;
+    }
+
+    // Append the procedural frame as the last layer. (Doing it after the
+    // line loop keeps the frame's curves at the tail of the arrays so the
+    // surah-only prefix above is reusable.)
+    if (firstLineDecorate && numLines > 0) {
+        emitFrame(g_surahCache.frameX, g_surahCache.frameY,
+                  g_surahCache.frameW, g_surahCache.frameH,
+                  0xFF281E14u,
+                  allCurves, layerData, layerRects,
+                  bandsArr, curveIndicesArr,
+                  totalCurves, totalLayers,
+                  (int)frameSeed);
     }
 
     const int bandsCount = totalLayers * baqarah::VkRenderer::kNumBands;
@@ -1898,6 +1939,48 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
         return -1.0f;
     }
     return baselineY;
+}
+
+// Fast path for changing the procedural frame style without re-running
+// glyph extraction. Restores the cached post-glyph state from the last
+// nUploadColrSurah call, re-emits the frame layer with the new seed,
+// and re-uploads. Returns false (and the caller should fall back to a
+// full nUploadColrSurah) if the cache is empty, was built for a
+// different renderer, or has no frame layer.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_baqarah_vk_NativeRenderer_nUpdateFrameSeed(
+    JNIEnv*, jobject, jlong handle, jint frameSeed) {
+    auto* r = asRenderer(handle);
+    if (!r) return JNI_FALSE;
+    if (!g_surahCache.valid || g_surahCache.renderer != r) return JNI_FALSE;
+
+    // Copy snapshot into working vectors so subsequent calls keep
+    // working from the same cache.
+    std::vector<float> allCurves = g_surahCache.allCurves;
+    std::vector<float> layerData = g_surahCache.layerData;
+    std::vector<float> layerRects = g_surahCache.layerRects;
+    std::vector<int>   bandsArr = g_surahCache.bandsArr;
+    std::vector<int>   curveIndicesArr = g_surahCache.curveIndicesArr;
+    int totalCurves = g_surahCache.totalCurves;
+    int totalLayers = g_surahCache.totalLayers;
+
+    emitFrame(g_surahCache.frameX, g_surahCache.frameY,
+              g_surahCache.frameW, g_surahCache.frameH,
+              0xFF281E14u,
+              allCurves, layerData, layerRects,
+              bandsArr, curveIndicesArr,
+              totalCurves, totalLayers,
+              (int)frameSeed);
+
+    const int bandsCount = totalLayers * baqarah::VkRenderer::kNumBands;
+    if (!r->setColrGlyphs(allCurves.data(), totalCurves,
+                          layerData.data(), layerRects.data(),
+                          totalLayers,
+                          bandsArr.data(), bandsCount,
+                          curveIndicesArr.data(), (int)curveIndicesArr.size())) {
+        return JNI_FALSE;
+    }
+    return JNI_TRUE;
 }
 
 // Lay out an array of codepoints RTL and render each through the
