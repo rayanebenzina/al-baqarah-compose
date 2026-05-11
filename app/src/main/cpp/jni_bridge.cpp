@@ -3,6 +3,8 @@
 #include <android/native_window_jni.h>
 #include <jni.h>
 
+#include <sys/system_properties.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -128,6 +130,89 @@ bool initFontHandle(JNIEnv* env, jbyteArray ba, FontHandle& out) {
     if (out.scaleFor1em <= 0.0f) return false;
     out.ready = true;
     return true;
+}
+
+// Read at most once per emitFrame call; cheap on Android since the
+// property server caches values in shared memory.
+static bool isFrameAsciiDebugEnabled() {
+    char buf[PROP_VALUE_MAX] = {0};
+    const int n = __system_property_get("debug.baqarah.frame", buf);
+    return n > 0 && buf[0] == '1';
+}
+
+// ASCII rasterizer for the curves just emitted by emitFrame. Samples
+// each quadratic Bézier in UV space and prints a 96×18 grid to logcat,
+// plus the bounding box and a count of cells that fall inside the
+// title-glyph ellipse (= invariant violations — those cells are marked
+// 'X' instead of '#'). Gated by the `debug.baqarah.frame` system
+// property so it costs nothing in normal runs:
+//   adb shell setprop debug.baqarah.frame 1
+//   adb logcat -s BaqarahVkJNI:I
+static void logFrameAsciiPreview(const std::vector<float>& allCurves,
+                                  int curveStart, int curveCount,
+                                  int seed,
+                                  int sideOpt, int kissOpt, int flourishOpt,
+                                  int tipOpt, int bandOpt) {
+    if (!isFrameAsciiDebugEnabled()) return;
+
+    constexpr int W = 96;
+    constexpr int H = 18;
+    char grid[H][W + 1];
+    for (int r = 0; r < H; ++r) {
+        for (int c = 0; c < W; ++c) grid[r][c] = ' ';
+        grid[r][W] = '\0';
+    }
+
+    // Middle-loop ellipse: cx=0.5, cy=0.5, half-axes (0.28, 0.40) in
+    // UV. The title plate sits inside it — any non-backbone curve
+    // landing strictly inside (margin 0.85 to allow the loop ribbon
+    // itself) violates the readability invariant.
+    constexpr float interiorMargin = 0.85f;
+    constexpr float midHalfWUV = 0.28f, midHalfHUV = 0.40f;
+    auto insideTitle = [&](float u, float v) {
+        const float du = (u - 0.5f) / midHalfWUV;
+        const float dv = (v - 0.5f) / midHalfHUV;
+        return (du * du + dv * dv) < (interiorMargin * interiorMargin);
+    };
+
+    float uMin = 1e9f, uMax = -1e9f, vMin = 1e9f, vMax = -1e9f;
+    int interiorHits = 0;
+
+    constexpr int SAMPLES = 12;
+    for (int i = 0; i < curveCount; ++i) {
+        const float x0 = allCurves[(curveStart + i) * 6 + 0];
+        const float y0 = allCurves[(curveStart + i) * 6 + 1];
+        const float x1 = allCurves[(curveStart + i) * 6 + 2];
+        const float y1 = allCurves[(curveStart + i) * 6 + 3];
+        const float x2 = allCurves[(curveStart + i) * 6 + 4];
+        const float y2 = allCurves[(curveStart + i) * 6 + 5];
+        for (int s = 0; s <= SAMPLES; ++s) {
+            const float t  = (float)s / (float)SAMPLES;
+            const float mt = 1.0f - t;
+            const float u  = mt*mt*x0 + 2.0f*mt*t*x1 + t*t*x2;
+            const float v  = mt*mt*y0 + 2.0f*mt*t*y1 + t*t*y2;
+            uMin = std::min(uMin, u); uMax = std::max(uMax, u);
+            vMin = std::min(vMin, v); vMax = std::max(vMax, v);
+            const int col = (int)(u * (float)W);
+            const int row = (int)(v * (float)H);
+            if (col >= 0 && col < W && row >= 0 && row < H) {
+                if (insideTitle(u, v)) {
+                    grid[row][col] = 'X';
+                    ++interiorHits;
+                } else if (grid[row][col] != 'X') {
+                    grid[row][col] = '#';
+                }
+            }
+        }
+    }
+
+    LOGI("frame-ascii seed=%d slots=(side=%d kiss=%d flour=%d tip=%d band=%d) "
+         "curves=%d bbox=(%.2f,%.2f)-(%.2f,%.2f) titleInteriorHits=%d",
+         seed, sideOpt, kissOpt, flourishOpt, tipOpt, bandOpt, curveCount,
+         uMin, vMin, uMax, vMax, interiorHits);
+    for (int r = 0; r < H; ++r) {
+        LOGI("frame-ascii |%s|", grid[r]);
+    }
 }
 
 // Procedural Mushaf-style frame around a title glyph, emitted as one
@@ -610,6 +695,9 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
     drawBand(bandOpt);
 
     const int curveCount = totalCurves - curveStart;
+
+    logFrameAsciiPreview(allCurves, curveStart, curveCount, seed,
+                         sideInteriorOpt, kissOpt, flourishOpt, tipOpt, bandOpt);
 
     // Layer header: curveOffset, curveCount, _, _, r, g, b, a (8 floats).
     layerData.push_back((float)curveStart);
