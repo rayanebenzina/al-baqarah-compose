@@ -42,21 +42,23 @@ class NativeRenderer {
 
     /**
      * Render an entire surah. Each codepoint picks its TTF via
-     * fontIndices[i] (parallel array); verseStarts[] partitions
-     * codepoints into per-verse runs (last entry = total codepoint count).
+     * fontIndices[i] (parallel array); lineStarts[] partitions codepoints
+     * into Mushaf-page lines (last entry = total codepoint count). Each
+     * line is laid out on its own screen row using the glyphs' natural
+     * advances — QPC v4 glyph metrics are calibrated per Mushaf line.
      * Returns the total content height in pixels (use to size the scroll
      * range), or -1 on failure.
      */
     fun uploadColrSurah(
         ttfs: Array<ByteArray>,
-        codepoints: IntArray, fontIndices: IntArray, verseStarts: IntArray,
+        codepoints: IntArray, fontIndices: IntArray, lineStarts: IntArray,
         screenWidthPx: Float, leftMarginPx: Float, rightMarginPx: Float,
         topMarginPx: Float, fontSizePx: Float,
-        lineSpacingPx: Float, ayahSpacingPx: Float,
+        lineSpacingPx: Float,
     ): Float = nUploadColrSurah(
-        handle, ttfs, codepoints, fontIndices, verseStarts,
+        handle, ttfs, codepoints, fontIndices, lineStarts,
         screenWidthPx, leftMarginPx, rightMarginPx, topMarginPx, fontSizePx,
-        lineSpacingPx, ayahSpacingPx,
+        lineSpacingPx,
     )
 
     fun release() {
@@ -83,9 +85,9 @@ class NativeRenderer {
     private external fun nUploadColrSurah(
         handle: Long,
         ttfs: Array<ByteArray>,
-        codepoints: IntArray, fontIndices: IntArray, verseStarts: IntArray,
+        codepoints: IntArray, fontIndices: IntArray, lineStarts: IntArray,
         screenWidthPx: Float, leftMarginPx: Float, rightMarginPx: Float,
         topMarginPx: Float, fontSizePx: Float,
-        lineSpacingPx: Float, ayahSpacingPx: Float,
+        lineSpacingPx: Float,
     ): Float
 }

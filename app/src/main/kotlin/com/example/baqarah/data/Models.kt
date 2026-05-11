@@ -23,5 +23,6 @@ data class Word(
     val position: Int,
     @Json(name = "code_v2") val codeV2: String?,
     @Json(name = "page_number") val pageNumber: Int,
+    @Json(name = "line_number") val lineNumber: Int? = null,
     @Json(name = "char_type_name") val charTypeName: String,
 )

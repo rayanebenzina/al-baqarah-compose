@@ -42,12 +42,19 @@ class VulkanDebugActivity : Activity() {
         val app = application as BaqarahApp
         val screen = resources.displayMetrics
         val screenWidthPx = screen.widthPixels.toFloat()
-        val leftMargin = screenWidthPx * 0.05f
-        val rightMargin = screenWidthPx * 0.05f
+        val leftMargin = screenWidthPx * 0.02f
+        val rightMargin = screenWidthPx * 0.02f
         val topMargin = 120f
+        // Cap. Lines wider than the usable width get downscaled per-line
+        // by the renderer (QPC v4 Mushaf-line widths range from ~6 em for
+        // surah-start fragments up to ~17.9 em for fully-justified body
+        // lines, so most body lines render slightly smaller than this).
         val fontSizePx = 80f
-        val lineSpacingPx = fontSizePx * 1.5f
-        val ayahSpacingPx = fontSizePx * 0.6f
+        // QPC v4 has ascent=3940, descent=-2520 vs em=2500: glyphs extend
+        // ~2.58x em-height between extremes, so the line box needs to be
+        // ~2.6x fontSize or descenders/marks of one line collide with
+        // ascenders/marks of the next.
+        val lineSpacingPx = fontSizePx * 2.6f
 
         scope.launch {
             try {
@@ -80,15 +87,27 @@ class VulkanDebugActivity : Activity() {
                 val pageToIndex = HashMap<Int, Int>(pageNumbers.size)
                 pageNumbers.forEachIndexed { i, p -> pageToIndex[p] = i }
 
-                // Flatten codepoints + parallel font index + verseStarts.
+                // Flatten codepoints + parallel font index. Partition by
+                // Mushaf line (page_number, line_number): each contiguous
+                // group of words sharing the same (page, line) is one
+                // physical line on screen — QPC v4 glyph advances are
+                // calibrated for the specific line they appear on, so
+                // breaking anywhere else produces wrong spacing.
                 val codepoints = ArrayList<Int>(verses.size * 12)
                 val fontIndices = ArrayList<Int>(verses.size * 12)
-                val verseStarts = IntArray(verses.size + 1)
-                for ((vi, verse) in verses.withIndex()) {
-                    verseStarts[vi] = codepoints.size
+                val lineStarts = ArrayList<Int>(verses.size * 2 + 1)
+                var prevPage = -1
+                var prevLine = -1
+                for (verse in verses) {
                     for (word in verse.words) {
                         val code = word.codeV2 ?: continue
                         val fontIdx = pageToIndex[word.pageNumber] ?: continue
+                        val line = word.lineNumber ?: 0
+                        if (word.pageNumber != prevPage || line != prevLine) {
+                            lineStarts.add(codepoints.size)
+                            prevPage = word.pageNumber
+                            prevLine = line
+                        }
                         var i = 0
                         while (i < code.length) {
                             val cp = code.codePointAt(i)
@@ -98,22 +117,21 @@ class VulkanDebugActivity : Activity() {
                         }
                     }
                 }
-                verseStarts[verses.size] = codepoints.size
+                lineStarts.add(codepoints.size)
                 val t3 = SystemClock.elapsedRealtime()
-                Log.i(TAG, "flattened ${codepoints.size} codepoints (${t3 - t2} ms)")
+                Log.i(TAG, "flattened ${codepoints.size} codepoints, ${lineStarts.size - 1} lines (${t3 - t2} ms)")
 
                 v.setColrSurah(
                     ttfs = ttfs.toTypedArray(),
                     codepoints = codepoints.toIntArray(),
                     fontIndices = fontIndices.toIntArray(),
-                    verseStarts = verseStarts,
+                    lineStarts = lineStarts.toIntArray(),
                     screenWidthPx = screenWidthPx,
                     leftMarginPx = leftMargin,
                     rightMarginPx = rightMargin,
                     topMarginPx = topMargin,
                     fontSizePx = fontSizePx,
                     lineSpacingPx = lineSpacingPx,
-                    ayahSpacingPx = ayahSpacingPx,
                 ) { totalHeightPx ->
                     Log.i(TAG, "surah uploaded, contentHeight=$totalHeightPx")
                     v.setContentHeight(totalHeightPx)

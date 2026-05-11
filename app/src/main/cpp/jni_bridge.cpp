@@ -72,7 +72,12 @@ namespace {
 struct FontHandle {
     std::vector<uint8_t> data;
     stbtt_fontinfo info{};
-    int unitsPerEm = 1000;
+    // Pixels-per-font-unit at fontSizePx=1. Multiply by fontSizePx for the
+    // working scale. This is `1 / head.unitsPerEm`, not
+    // `1 / (hhea.ascent - hhea.descent)` — those two differ wildly in QPC
+    // v4 (e.g. 2500 vs 6460), and getting it wrong shrinks the layout by
+    // ~2.5x.
+    float scaleFor1em = 0.0f;
     bool ready = false;
 };
 
@@ -118,29 +123,31 @@ bool initFontHandle(JNIEnv* env, jbyteArray ba, FontHandle& out) {
     int offset = stbtt_GetFontOffsetForIndex(out.data.data(), 0);
     if (offset < 0) return false;
     if (!stbtt_InitFont(&out.info, out.data.data(), offset)) return false;
-    int ascent = 0, descent = 0, lineGap = 0;
-    stbtt_GetFontVMetrics(&out.info, &ascent, &descent, &lineGap);
-    out.unitsPerEm = (ascent - descent > 0) ? (ascent - descent) : 1000;
+    out.scaleFor1em = stbtt_ScaleForMappingEmToPixels(&out.info, 1.0f);
+    if (out.scaleFor1em <= 0.0f) return false;
     out.ready = true;
     return true;
 }
 
 }  // namespace
 
-// Multi-font, multi-verse RTL layout. Each codepoint picks its TTF by
-// fontIndices[i] (parallel to codepoints[]). verseStarts[] partitions
-// codepoints into verses (length numVerses+1; last entry = total
-// codepoint count). Returns total content height in px, or -1 on error.
+// Multi-font, Mushaf-line RTL layout. Each codepoint picks its TTF by
+// fontIndices[i] (parallel to codepoints[]). lineStarts[] partitions
+// codepoints into Mushaf lines (length numLines+1; last entry = total
+// codepoint count). QPC v4 glyph advances are calibrated for the specific
+// Mushaf line a glyph appears on (including stretched kashida variants for
+// justification), so each line must be rendered on its own screen row with
+// no soft-wrapping. Returns total content height in px, or -1 on error.
 extern "C" JNIEXPORT jfloat JNICALL
 Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
     JNIEnv* env, jobject, jlong handle,
     jobjectArray ttfs,
-    jintArray codepoints, jintArray fontIndices, jintArray verseStarts,
+    jintArray codepoints, jintArray fontIndices, jintArray lineStarts,
     jfloat screenWidthPx, jfloat leftMarginPx, jfloat rightMarginPx,
     jfloat topMarginPx, jfloat fontSizePx,
-    jfloat lineSpacingPx, jfloat ayahSpacingPx) {
+    jfloat lineSpacingPx) {
     auto* r = asRenderer(handle);
-    if (!r || !ttfs || !codepoints || !fontIndices || !verseStarts) return -1.0f;
+    if (!r || !ttfs || !codepoints || !fontIndices || !lineStarts) return -1.0f;
 
     const jsize numFonts = env->GetArrayLength(ttfs);
     if (numFonts <= 0) return -1.0f;
@@ -157,18 +164,18 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
 
     const jsize cpCount = env->GetArrayLength(codepoints);
     const jsize fiCount = env->GetArrayLength(fontIndices);
-    const jsize vsCount = env->GetArrayLength(verseStarts);
-    if (cpCount <= 0 || fiCount != cpCount || vsCount < 2) {
-        LOGE("nUploadColrSurah: bad array sizes cp=%d fi=%d vs=%d",
-             (int)cpCount, (int)fiCount, (int)vsCount);
+    const jsize lsCount = env->GetArrayLength(lineStarts);
+    if (cpCount <= 0 || fiCount != cpCount || lsCount < 2) {
+        LOGE("nUploadColrSurah: bad array sizes cp=%d fi=%d ls=%d",
+             (int)cpCount, (int)fiCount, (int)lsCount);
         return -1.0f;
     }
     std::vector<int> cps((size_t)cpCount);
     std::vector<int> fis((size_t)fiCount);
-    std::vector<int> vss((size_t)vsCount);
+    std::vector<int> lss((size_t)lsCount);
     env->GetIntArrayRegion(codepoints, 0, cpCount, cps.data());
     env->GetIntArrayRegion(fontIndices, 0, fiCount, fis.data());
-    env->GetIntArrayRegion(verseStarts, 0, vsCount, vss.data());
+    env->GetIntArrayRegion(lineStarts, 0, lsCount, lss.data());
 
     std::vector<float> allCurves;
     std::vector<float> layerData;
@@ -180,22 +187,39 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
 
     const float minX = leftMarginPx;
     const float maxX = screenWidthPx - rightMarginPx;
+    const float usableWidth = maxX - minX;
     float baselineY = topMarginPx;
-    const int numVerses = (int)vsCount - 1;
+    const int numLines = (int)lsCount - 1;
 
-    for (int v = 0; v < numVerses; ++v) {
-        // Begin a new verse on a new line. baselineY already points at the
-        // first baseline (caller passes topMarginPx for verse 0; subsequent
-        // verses get += lineSpacing + ayahSpacing at the end of the prior
-        // verse loop body).
+    for (int ln = 0; ln < numLines; ++ln) {
+        // First pass: compute the line's natural width at fontSizePx, so we
+        // can shrink lines wider than the screen and keep narrower lines at
+        // the requested size. QPC v4 Mushaf lines are designed to fill one
+        // page-width worth of advances, so most lines hit the cap; shorter
+        // lines (surah-start fragments, basmala lines) render larger.
+        float naturalWidthPx = 0.0f;
+        for (int i = lss[ln]; i < lss[ln + 1]; ++i) {
+            const int fi = fis[(size_t)i];
+            if (fi < 0 || fi >= numFonts) continue;
+            FontHandle& font = fonts[(size_t)fi];
+            int gid = stbtt_FindGlyphIndex(&font.info, cps[(size_t)i]);
+            if (gid == 0) continue;
+            int advance = 0, lsb = 0;
+            stbtt_GetGlyphHMetrics(&font.info, gid, &advance, &lsb);
+            naturalWidthPx += (float)advance * font.scaleFor1em * fontSizePx;
+        }
+        const float lineFs = (naturalWidthPx > usableWidth && naturalWidthPx > 0.0f)
+                                 ? fontSizePx * (usableWidth / naturalWidthPx)
+                                 : fontSizePx;
+
         float cursorX = maxX;
 
-        for (int i = vss[v]; i < vss[v + 1]; ++i) {
+        for (int i = lss[ln]; i < lss[ln + 1]; ++i) {
             const int cp = cps[(size_t)i];
             const int fi = fis[(size_t)i];
             if (fi < 0 || fi >= numFonts) continue;
             FontHandle& font = fonts[(size_t)fi];
-            const float scale = fontSizePx / (float)font.unitsPerEm;
+            const float scale = font.scaleFor1em * lineFs;
 
             int gid = stbtt_FindGlyphIndex(&font.info, cp);
             if (gid == 0) continue;
@@ -204,11 +228,10 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
             stbtt_GetGlyphHMetrics(&font.info, gid, &advance, &lsb);
             const float advancePx = (float)advance * scale;
 
-            // Wrap to next line if this glyph wouldn't fit.
-            if (cursorX - advancePx < minX) {
-                baselineY += lineSpacingPx;
-                cursorX = maxX;
-            }
+            // RTL: cursor is the RIGHT edge of the current glyph's advance
+            // box. Move it left by the advance before drawing so dstX
+            // places the glyph's bbox correctly relative to its origin.
+            cursorX -= advancePx;
 
             int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
             stbtt_GetGlyphBox(&font.info, gid, &x0, &y0, &x1, &y1);
@@ -264,18 +287,15 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
                     ++totalLayers;
                 }
             }
-
-            cursorX -= advancePx;
         }
 
-        // End of verse: advance to the next verse's baseline.
-        baselineY += lineSpacingPx + ayahSpacingPx;
+        baselineY += lineSpacingPx;
     }
 
     const int bandsCount = totalLayers * baqarah::VkRenderer::kNumBands;
-    LOGI("nUploadColrSurah: verses=%d codepoints=%d -> %d layers, %d curves, "
+    LOGI("nUploadColrSurah: lines=%d codepoints=%d -> %d layers, %d curves, "
          "%d bands, %zu curveIndices, contentY=%.0f",
-         numVerses, (int)cpCount, totalLayers, totalCurves,
+         numLines, (int)cpCount, totalLayers, totalCurves,
          bandsCount, curveIndicesArr.size(), baselineY);
 
     if (!r->setColrGlyphs(allCurves.data(), totalCurves,
@@ -309,17 +329,12 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrLineFromTtf(
     std::vector<int> cps((size_t)cpCount);
     env->GetIntArrayRegion(codepoints, 0, cpCount, cps.data());
 
-    // Resolve em-size scale from the font's vertical metrics so the
-    // requested fontSizePx matches Skia's interpretation: scale =
-    // fontSizePx / unitsPerEm. We don't have unitsPerEm directly from
-    // stbtt, but ascent - descent is what stbtt itself uses.
     stbtt_fontinfo info;
     int offset = stbtt_GetFontOffsetForIndex(ttf.data(), 0);
     if (offset < 0 || !stbtt_InitFont(&info, ttf.data(), offset)) return JNI_FALSE;
-    int ascent = 0, descent = 0, lineGap = 0;
-    stbtt_GetFontVMetrics(&info, &ascent, &descent, &lineGap);
-    const int unitsPerEm = (ascent - descent > 0) ? (ascent - descent) : 1000;
-    const float scale = fontSizePx / (float)unitsPerEm;
+    // Scale via head.unitsPerEm, not ascent-descent — QPC v4 has those
+    // two values diverging by 2-3x.
+    const float scale = stbtt_ScaleForMappingEmToPixels(&info, fontSizePx);
 
     std::vector<float> allCurves;
     std::vector<float> layerData;   // 8 floats per layer (SSBO)

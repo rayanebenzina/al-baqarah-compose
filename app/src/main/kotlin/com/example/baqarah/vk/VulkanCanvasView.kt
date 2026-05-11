@@ -34,10 +34,10 @@ class VulkanCanvasView @JvmOverloads constructor(
         ) : Pending
         data class Surah(
             val ttfs: Array<ByteArray>,
-            val codepoints: IntArray, val fontIndices: IntArray, val verseStarts: IntArray,
+            val codepoints: IntArray, val fontIndices: IntArray, val lineStarts: IntArray,
             val screenWidthPx: Float, val leftMarginPx: Float, val rightMarginPx: Float,
             val topMarginPx: Float, val fontSizePx: Float,
-            val lineSpacingPx: Float, val ayahSpacingPx: Float,
+            val lineSpacingPx: Float,
         ) : Pending
     }
     private var pending: Pending? = null
@@ -125,24 +125,24 @@ class VulkanCanvasView @JvmOverloads constructor(
      */
     fun setColrSurah(
         ttfs: Array<ByteArray>,
-        codepoints: IntArray, fontIndices: IntArray, verseStarts: IntArray,
+        codepoints: IntArray, fontIndices: IntArray, lineStarts: IntArray,
         screenWidthPx: Float, leftMarginPx: Float, rightMarginPx: Float,
         topMarginPx: Float, fontSizePx: Float,
-        lineSpacingPx: Float, ayahSpacingPx: Float,
+        lineSpacingPx: Float,
         onUploaded: (totalHeightPx: Float) -> Unit = {},
     ) {
         val p = Pending.Surah(
-            ttfs, codepoints, fontIndices, verseStarts,
+            ttfs, codepoints, fontIndices, lineStarts,
             screenWidthPx, leftMarginPx, rightMarginPx,
-            topMarginPx, fontSizePx, lineSpacingPx, ayahSpacingPx,
+            topMarginPx, fontSizePx, lineSpacingPx,
         )
         pending = p
         renderHandler.post {
             if (surfaceReady.get()) {
                 val h = renderer.uploadColrSurah(
-                    p.ttfs, p.codepoints, p.fontIndices, p.verseStarts,
+                    p.ttfs, p.codepoints, p.fontIndices, p.lineStarts,
                     p.screenWidthPx, p.leftMarginPx, p.rightMarginPx,
-                    p.topMarginPx, p.fontSizePx, p.lineSpacingPx, p.ayahSpacingPx,
+                    p.topMarginPx, p.fontSizePx, p.lineSpacingPx,
                 )
                 Log.i(TAG, "uploadColrSurah h=$h")
                 post { onUploaded(h) }
