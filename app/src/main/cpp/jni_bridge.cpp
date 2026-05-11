@@ -276,7 +276,7 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
     // share the triple band above and emit two end medallions plus a
     // chain along the long edges, but the motifs differ — stars,
     // petals, sunburst rays, or interlaced girih shapes.
-    const int NUM_STYLES = 25;
+    const int NUM_STYLES = 28;
     const int style = ((unsigned)seed) % (unsigned)NUM_STYLES;
     LOGI("emitFrame: seed=%d style=%d", seed, style);
 
@@ -1811,6 +1811,287 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
                 petal(uPos, aVtop, -PI*0.5f, L/dstW, L/dstH, W/dstW, W/dstH, false);
                 petal(uPos, aVbot,  PI*0.5f, L/dstW, L/dstH, W/dstW, W/dstH, false);
                 petal(uPos, aVbot, -PI*0.5f, L/dstW, L/dstH, W/dstW, W/dstH, false);
+            }
+        }
+    } else if (style == 25) {
+        // -------- Style 25: Lissajous knot rosette --------
+        // x = sin(a·t), y = sin(b·t + δ): with coprime (a,b) and many
+        // wraps, the curve self-intersects into a knotted lattice. Drawn
+        // as a thin polyline ribbon — produces an interlaced rosette.
+        auto lissajous = [&](float c) {
+            const float R = minSide * 0.32f;
+            const int SEG = 240;
+            const float A = 3.0f, B = 4.0f;       // 3:4 frequency ratio
+            const float DELTA = PI * 0.5f;
+            const float thickness = minSide * 0.012f;
+            float prevUO = 0.0f, prevVO = 0.0f, prevUI = 0.0f, prevVI = 0.0f;
+            for (int i = 0; i <= SEG; ++i) {
+                const float t = (float)i * 2.0f * PI / (float)SEG;
+                const float xC = R * sinf(A * t);
+                const float yC = R * sinf(B * t + DELTA);
+                // Tangent for ribbon perpendicular
+                const float dx = R * A * cosf(A * t);
+                const float dy = R * B * cosf(B * t + DELTA);
+                const float dlen = std::max(1e-6f, sqrtf(dx*dx + dy*dy));
+                const float perpX = -dy / dlen;
+                const float perpY =  dx / dlen;
+                const float uO = c + (xC + perpX * thickness) / dstW;
+                const float vO = 0.5f + (yC + perpY * thickness) / dstH;
+                const float uI = c + (xC - perpX * thickness) / dstW;
+                const float vI = 0.5f + (yC - perpY * thickness) / dstH;
+                if (i > 0) {
+                    line(prevUO, prevVO, uO, vO);
+                    line(uI, vI, prevUI, prevVI);
+                }
+                prevUO = uO; prevVO = vO;
+                prevUI = uI; prevVI = vI;
+            }
+            // Centre 6-petal flower over the knot
+            const float Lp = minSide * 0.10f, Wp = minSide * 0.028f;
+            for (int p = 0; p < 6; ++p) {
+                const float ang = (float)p * 2.0f * PI / 6.0f;
+                petal(c, 0.5f, ang, Lp/dstW, Lp/dstH, Wp/dstW, Wp/dstH, false);
+            }
+            polystar(c, 0.5f,
+                     (minSide*0.025f)/dstW, (minSide*0.025f)/dstH,
+                     (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
+                     8, 0.0f, true);
+        };
+        lissajous(cU_left);
+        lissajous(cU_right);
+        if (drawChain) {
+            // Chain: small lissajous loops (2:3 ratio)
+            const float R = minSide * 0.028f;
+            const float aVtop = (bandPx + R + minSide * 0.012f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 9;
+            const float thickness = minSide * 0.005f;
+            const int SEG = 48;
+            for (int k = 0; k < N; ++k) {
+                const float t0 = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t0 * (1.0f - 2.0f * chainMarginU);
+                for (int row = 0; row < 2; ++row) {
+                    const float vPos = (row == 0) ? aVtop : aVbot;
+                    float prevUO = 0, prevVO = 0, prevUI = 0, prevVI = 0;
+                    for (int i = 0; i <= SEG; ++i) {
+                        const float tt = (float)i * 2.0f * PI / (float)SEG;
+                        const float xC = R * sinf(2.0f * tt);
+                        const float yC = R * sinf(3.0f * tt + PI * 0.5f);
+                        const float dx = R * 2.0f * cosf(2.0f * tt);
+                        const float dy = R * 3.0f * cosf(3.0f * tt + PI * 0.5f);
+                        const float dlen = std::max(1e-6f, sqrtf(dx*dx + dy*dy));
+                        const float perpX = -dy / dlen;
+                        const float perpY =  dx / dlen;
+                        const float uO = uPos + (xC + perpX * thickness) / dstW;
+                        const float vO = vPos + (yC + perpY * thickness) / dstH;
+                        const float uI = uPos + (xC - perpX * thickness) / dstW;
+                        const float vI = vPos + (yC - perpY * thickness) / dstH;
+                        if (i > 0) {
+                            line(prevUO, prevVO, uO, vO);
+                            line(uI, vI, prevUI, prevVI);
+                        }
+                        prevUO = uO; prevVO = vO;
+                        prevUI = uI; prevVI = vI;
+                    }
+                }
+            }
+        }
+    } else if (style == 26) {
+        // -------- Style 26: Logarithmic spiral nautilus --------
+        // r = a·exp(b·θ): traces a self-similar nautilus shell. Drawn as
+        // a thickening ribbon (thickness scales with r) so the spiral
+        // visually "grows" outward. Petals attached at each half-turn
+        // give it a floral nautilus look.
+        auto nautilus = [&](float c) {
+            const float a = minSide * 0.025f;
+            const float b = 0.22f;     // growth rate per radian
+            const float thetaMax = 4.5f * PI; // ~2.25 turns
+            const int SEG = 220;
+            float prevUO = 0, prevVO = 0, prevUI = 0, prevVI = 0;
+            for (int i = 0; i <= SEG; ++i) {
+                const float th = (float)i * thetaMax / (float)SEG;
+                const float r = a * expf(b * th);
+                const float xC = r * cosf(th);
+                const float yC = r * sinf(th);
+                // Tangent: dr/dθ = b·r, so direction = (cosθ - b·sinθ, sinθ + b·cosθ) * r
+                const float tx = cosf(th) - b * sinf(th);
+                const float ty = sinf(th) + b * cosf(th);
+                const float tlen = std::max(1e-6f, sqrtf(tx*tx + ty*ty));
+                const float perpX = -ty / tlen;
+                const float perpY =  tx / tlen;
+                const float thickness = r * 0.10f + minSide * 0.005f;
+                const float uO = c + (xC + perpX * thickness) / dstW;
+                const float vO = 0.5f + (yC + perpY * thickness) / dstH;
+                const float uI = c + (xC - perpX * thickness) / dstW;
+                const float vI = 0.5f + (yC - perpY * thickness) / dstH;
+                if (i > 0) {
+                    line(prevUO, prevVO, uO, vO);
+                    line(uI, vI, prevUI, prevVI);
+                }
+                prevUO = uO; prevVO = vO;
+                prevUI = uI; prevVI = vI;
+            }
+            // Petals at every half-turn along the spiral
+            for (int k = 1; k <= 4; ++k) {
+                const float th = (float)k * PI;
+                const float r = a * expf(b * th);
+                const float xC = r * cosf(th);
+                const float yC = r * sinf(th);
+                const float ang = th + PI * 0.5f; // perpendicular to radial
+                const float L = std::min(r * 0.6f, minSide * 0.08f);
+                const float W = L * 0.30f;
+                petal(c + xC / dstW, 0.5f + yC / dstH, ang,
+                      L/dstW, L/dstH, W/dstW, W/dstH, false);
+            }
+            // Mirror spiral (counter-rotating) — half intensity
+            float pUO = 0, pVO = 0, pUI = 0, pVI = 0;
+            for (int i = 0; i <= SEG; ++i) {
+                const float th = (float)i * thetaMax / (float)SEG;
+                const float r = a * expf(b * th);
+                const float xC = -r * cosf(th); // mirror x
+                const float yC = r * sinf(th);
+                const float tx = -(cosf(th) - b * sinf(th));
+                const float ty = sinf(th) + b * cosf(th);
+                const float tlen = std::max(1e-6f, sqrtf(tx*tx + ty*ty));
+                const float perpX = -ty / tlen;
+                const float perpY =  tx / tlen;
+                const float thickness = r * 0.06f + minSide * 0.003f;
+                const float uO = c + (xC + perpX * thickness) / dstW;
+                const float vO = 0.5f + (yC + perpY * thickness) / dstH;
+                const float uI = c + (xC - perpX * thickness) / dstW;
+                const float vI = 0.5f + (yC - perpY * thickness) / dstH;
+                if (i > 0) {
+                    line(pUO, pVO, uO, vO);
+                    line(uI, vI, pUI, pVI);
+                }
+                pUO = uO; pVO = vO;
+                pUI = uI; pVI = vI;
+            }
+        };
+        nautilus(cU_left);
+        nautilus(cU_right);
+        if (drawChain) {
+            // Chain: alternating tiny spirals + petals
+            const float aVtop = (bandPx + minSide * 0.030f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 11;
+            const float L = minSide * 0.030f, W = minSide * 0.009f;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                if ((k & 1) == 0) {
+                    // Small spiral as 3-petal pinwheel
+                    for (int q = 0; q < 3; ++q) {
+                        const float ang = (float)q * 2.0f * PI / 3.0f;
+                        petal(uPos, aVtop, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                        petal(uPos, aVbot, -ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                    }
+                } else {
+                    // Tiny rosette: 6 short petals
+                    const float Ls = L * 0.7f, Ws = W * 0.9f;
+                    for (int q = 0; q < 6; ++q) {
+                        const float ang = (float)q * 2.0f * PI / 6.0f;
+                        petal(uPos, aVtop, ang, Ls/dstW, Ls/dstH, Ws/dstW, Ws/dstH, false);
+                        petal(uPos, aVbot, ang, Ls/dstW, Ls/dstH, Ws/dstW, Ws/dstH, false);
+                    }
+                }
+            }
+        }
+    } else if (style == 27) {
+        // -------- Style 27: Branching fractal tree --------
+        // Symmetric binary tree growing outward from medallion centre.
+        // Each branch is a thin line, and every leaf-tip has a small
+        // petal-flower. Two recursion levels keep it readable at this
+        // scale.
+        auto fractalTree = [&](float c) {
+            // Branch helper: draw a thick line as two parallel lines.
+            auto branch = [&](float x0, float y0, float x1, float y1, float halfW) {
+                const float dx = x1 - x0, dy = y1 - y0;
+                const float dlen = std::max(1e-6f, sqrtf(dx*dx + dy*dy));
+                const float perpX = -dy / dlen * halfW;
+                const float perpY =  dx / dlen * halfW;
+                // Quad: (x0+p, y0+p) -> (x1+p, y1+p) -> (x1-p, y1-p) -> (x0-p, y0-p)
+                line(x0 + perpX, y0 + perpY, x1 + perpX, y1 + perpY);
+                line(x1 + perpX, y1 + perpY, x1 - perpX, y1 - perpY);
+                line(x1 - perpX, y1 - perpY, x0 - perpX, y0 - perpY);
+                line(x0 - perpX, y0 - perpY, x0 + perpX, y0 + perpY);
+            };
+            // 8 main branches radiating outward from centre (like a star)
+            const float L1 = minSide * 0.18f;
+            const float L2 = minSide * 0.10f;
+            const float L3 = minSide * 0.060f;
+            const float W1 = minSide * 0.008f;
+            const float W2 = minSide * 0.006f;
+            const float W3 = minSide * 0.004f;
+            const float branchAngle = PI * 0.30f; // ~54° sub-branch angle
+            for (int p = 0; p < 8; ++p) {
+                const float ang = (float)p * 2.0f * PI / 8.0f;
+                const float dirX = cosf(ang), dirY = sinf(ang);
+                // Main branch: centre → tip1
+                const float tip1X = dirX * L1, tip1Y = dirY * L1;
+                branch(c, 0.5f,
+                       c + tip1X / dstW, 0.5f + tip1Y / dstH,
+                       W1 / dstW);
+                // Sub-branches at tip1: two children at ±branchAngle
+                for (int side = 0; side < 2; ++side) {
+                    const float subAng = ang + (side == 0 ? branchAngle : -branchAngle);
+                    const float subX = tip1X + cosf(subAng) * L2;
+                    const float subY = tip1Y + sinf(subAng) * L2;
+                    branch(c + tip1X / dstW, 0.5f + tip1Y / dstH,
+                           c + subX / dstW, 0.5f + subY / dstH,
+                           W2 / dstW);
+                    // Sub-sub-branches (one more level)
+                    for (int side2 = 0; side2 < 2; ++side2) {
+                        const float ssAng = subAng + (side2 == 0 ? branchAngle * 0.7f : -branchAngle * 0.7f);
+                        const float ssX = subX + cosf(ssAng) * L3;
+                        const float ssY = subY + sinf(ssAng) * L3;
+                        branch(c + subX / dstW, 0.5f + subY / dstH,
+                               c + ssX / dstW, 0.5f + ssY / dstH,
+                               W3 / dstW);
+                        // Leaf-flower at tip: 4 tiny petals
+                        const float Lleaf = minSide * 0.018f, Wleaf = minSide * 0.007f;
+                        for (int q = 0; q < 4; ++q) {
+                            const float lang = ssAng + (float)q * PI * 0.5f;
+                            petal(c + ssX / dstW, 0.5f + ssY / dstH, lang,
+                                  Lleaf/dstW, Lleaf/dstH,
+                                  Wleaf/dstW, Wleaf/dstH, false);
+                        }
+                    }
+                }
+            }
+            // Centre: dense 12-petal hub
+            const float Lh = minSide * 0.050f, Wh = minSide * 0.015f;
+            for (int p = 0; p < 12; ++p) {
+                const float ang = (float)p * 2.0f * PI / 12.0f;
+                petal(c, 0.5f, ang, Lh/dstW, Lh/dstH, Wh/dstW, Wh/dstH, false);
+            }
+            polystar(c, 0.5f,
+                     (minSide*0.020f)/dstW, (minSide*0.020f)/dstH,
+                     (minSide*0.012f)/dstW, (minSide*0.012f)/dstH,
+                     6, 0.0f, false);
+        };
+        fractalTree(cU_left);
+        fractalTree(cU_right);
+        if (drawChain) {
+            // Chain: tiny Y-shaped branches alternating up/down
+            const float aVtop = (bandPx + minSide * 0.030f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const float L = minSide * 0.030f;
+            const int N = 11;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                // Trefoil leaf: 3 short petals
+                for (int q = 0; q < 3; ++q) {
+                    const float angT = (float)q * 2.0f * PI / 3.0f - PI * 0.5f;
+                    const float angB = (float)q * 2.0f * PI / 3.0f + PI * 0.5f;
+                    petal(uPos, aVtop, angT,
+                          L/dstW, L/dstH,
+                          (L*0.30f)/dstW, (L*0.30f)/dstH, false);
+                    petal(uPos, aVbot, angB,
+                          L/dstW, L/dstH,
+                          (L*0.30f)/dstW, (L*0.30f)/dstH, false);
+                }
             }
         }
     }
