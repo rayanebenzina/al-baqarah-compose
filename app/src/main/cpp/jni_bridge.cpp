@@ -276,7 +276,7 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
     // share the triple band above and emit two end medallions plus a
     // chain along the long edges, but the motifs differ — stars,
     // petals, sunburst rays, or interlaced girih shapes.
-    const int NUM_STYLES = 7;
+    const int NUM_STYLES = 10;
     const int style = ((unsigned)seed) % (unsigned)NUM_STYLES;
     LOGI("emitFrame: seed=%d style=%d", seed, style);
 
@@ -693,6 +693,206 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
                              (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
                              8, 0.0f, false);
                 }
+            }
+        }
+    } else if (style == 7) {
+        // -------- Style 7: Fractal flower — petals with sub-flowers at tips --------
+        auto subFlower = [&](float cU_, float cV_, float petalLenPx, float petalWPx, int n) {
+            for (int p = 0; p < n; ++p) {
+                const float ang = (float)p * 2.0f * PI / (float)n;
+                petal(cU_, cV_, ang,
+                      petalLenPx/dstW, petalLenPx/dstH,
+                      petalWPx/dstW, petalWPx/dstH, false);
+            }
+        };
+        auto fractalFlower = [&](float c) {
+            // 8 main petals
+            const float L1 = minSide * 0.36f, W1 = minSide * 0.040f;
+            for (int p = 0; p < 8; ++p) {
+                const float ang = (float)p * 2.0f * PI / 8.0f;
+                petal(c, 0.5f, ang, L1/dstW, L1/dstH, W1/dstW, W1/dstH, false);
+                // Sub-flower at each tip
+                const float tipU = c + cosf(ang) * (L1 * 0.92f) / dstW;
+                const float tipV = 0.5f + sinf(ang) * (L1 * 0.92f) / dstH;
+                subFlower(tipU, tipV, minSide * 0.040f, minSide * 0.014f, 5);
+            }
+            // 6 secondary petals filling the gaps, rotated 22.5° (between main petals)
+            const float L2 = minSide * 0.20f, W2 = minSide * 0.050f;
+            for (int p = 0; p < 8; ++p) {
+                const float ang = PI / 8.0f + (float)p * 2.0f * PI / 8.0f;
+                petal(c, 0.5f, ang, L2/dstW, L2/dstH, W2/dstW, W2/dstH, false);
+            }
+            // Center flower (4-petal)
+            subFlower(c, 0.5f, minSide * 0.060f, minSide * 0.022f, 4);
+            // Tiny pip
+            polystar(c, 0.5f, (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
+                     (minSide*0.010f)/dstW, (minSide*0.010f)/dstH, 6, 0.0f, false);
+        };
+        fractalFlower(cU_left);
+        fractalFlower(cU_right);
+        if (drawChain) {
+            // Chain: small 5-petal fractal-style flowers
+            const float aVtop = (bandPx + minSide * 0.040f + minSide * 0.012f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 11;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                subFlower(uPos, aVtop, minSide * 0.030f, minSide * 0.010f, 5);
+                subFlower(uPos, aVbot, minSide * 0.030f, minSide * 0.010f, 5);
+            }
+        }
+    } else if (style == 8) {
+        // -------- Style 8: Cardioid heart ring --------
+        // A heart shape made of two mirrored Béziers: from base point up
+        // to apex via outward lobe controls. Arranged radially in a ring
+        // around the medallion center.
+        auto heart = [&](float cU_, float cV_, float angle, float sizePx) {
+            const float dirU = cosf(angle), dirV = sinf(angle);
+            const float perpU = -sinf(angle), perpV = cosf(angle);
+            // Heart oriented so tip points OUTWARD from center.
+            const float lenU = sizePx / dstW, lenV = sizePx / dstH;
+            const float baseU = cU_, baseV = cV_;  // not used, just inner anchor
+            (void)baseU; (void)baseV;
+            // The heart has TIP at distance `sizePx` outward; the lobes are
+            // at the inner side. Two Bezier curves trace base→tip→base.
+            const float tipU = cU_ + dirU * lenU;
+            const float tipV = cV_ + dirV * lenV;
+            // Mid offset point on each side
+            const float bulgeU = sizePx * 0.55f;
+            const float bulgeV = sizePx * 0.55f;
+            const float lobeAU = cU_ + (-dirU * lenU * 0.25f + perpU * bulgeU) / dstW;
+            const float lobeAV = cV_ + (-dirV * lenV * 0.25f + perpV * bulgeV) / dstH;
+            const float lobeBU = cU_ + (-dirU * lenU * 0.25f - perpU * bulgeU) / dstW;
+            const float lobeBV = cV_ + (-dirV * lenV * 0.25f - perpV * bulgeV) / dstH;
+            // Inner pinch point — the cusp of the heart, slightly inside center
+            const float pinchU = cU_ - (dirU * sizePx * 0.05f) / dstW;
+            const float pinchV = cV_ - (dirV * sizePx * 0.05f) / dstH;
+            curve(pinchU, pinchV, lobeAU, lobeAV, tipU, tipV);
+            curve(tipU,   tipV,   lobeBU, lobeBV, pinchU, pinchV);
+        };
+        auto hearts = [&](float c) {
+            const int N = 10;
+            const float sz1 = minSide * 0.32f;
+            for (int p = 0; p < N; ++p) {
+                const float ang = (float)p * 2.0f * PI / (float)N;
+                heart(c, 0.5f, ang, sz1);
+            }
+            // Inner smaller ring of 8 hearts rotated half-step
+            const int N2 = 8;
+            const float sz2 = minSide * 0.15f;
+            for (int p = 0; p < N2; ++p) {
+                const float ang = PI / (float)N2 + (float)p * 2.0f * PI / (float)N2;
+                heart(c, 0.5f, ang, sz2);
+            }
+            // Center small flower
+            for (int p = 0; p < 6; ++p) {
+                const float ang = (float)p * 2.0f * PI / 6.0f;
+                petal(c, 0.5f, ang, (minSide*0.060f)/dstW, (minSide*0.060f)/dstH,
+                      (minSide*0.020f)/dstW, (minSide*0.020f)/dstH, false);
+            }
+            polystar(c, 0.5f, (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
+                     (minSide*0.010f)/dstW, (minSide*0.010f)/dstH, 6, 0.0f, false);
+        };
+        hearts(cU_left);
+        hearts(cU_right);
+        if (drawChain) {
+            const float aVtop = (bandPx + minSide * 0.045f + minSide * 0.008f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 9;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                // Heart pointing up at top edge, down at bottom edge
+                heart(uPos, aVtop, -PI * 0.5f, minSide * 0.040f);
+                heart(uPos, aVbot,  PI * 0.5f, minSide * 0.040f);
+            }
+        }
+    } else if (style == 9) {
+        // -------- Style 9: Vortex — sweeping curved arms --------
+        // Long pinwheel arms that taper from a thick base to a thin tip;
+        // similar to spiral but with deeper curl and chunkier base.
+        auto vortexArm = [&](float c, float baseAngle, float maxRadiusPx,
+                              float startWidthPx, float endWidthPx,
+                              float curl) {
+            const int N = 6;
+            float lx[N + 1], ly[N + 1];
+            float rx[N + 1], ry[N + 1];
+            float mx[N + 1], my[N + 1];
+            for (int i = 0; i <= N; ++i) {
+                const float t = (float)i / (float)N;
+                const float r = maxRadiusPx * t;
+                const float ang = baseAngle + t * curl;
+                const float w = startWidthPx + (endWidthPx - startWidthPx) * t;
+                const float ux = cosf(ang), uy = sinf(ang);
+                const float px = -uy, py = ux;
+                mx[i] = c + (r * ux) / dstW;
+                my[i] = 0.5f + (r * uy) / dstH;
+                lx[i] = mx[i] + (px * w) / dstW;
+                ly[i] = my[i] + (py * w) / dstH;
+                rx[i] = mx[i] - (px * w) / dstW;
+                ry[i] = my[i] - (py * w) / dstH;
+            }
+            for (int i = 0; i < N; ++i) {
+                curve(lx[i], ly[i],
+                      (lx[i] + lx[i + 1]) * 0.5f, (ly[i] + ly[i + 1]) * 0.5f,
+                      lx[i + 1], ly[i + 1]);
+            }
+            curve(lx[N], ly[N], mx[N], my[N], rx[N], ry[N]);
+            for (int i = N; i > 0; --i) {
+                curve(rx[i], ry[i],
+                      (rx[i] + rx[i - 1]) * 0.5f, (ry[i] + ry[i - 1]) * 0.5f,
+                      rx[i - 1], ry[i - 1]);
+            }
+            curve(rx[0], ry[0], mx[0], my[0], lx[0], ly[0]);
+        };
+        auto vortex = [&](float c) {
+            const int ARMS = 5;
+            for (int a = 0; a < ARMS; ++a) {
+                const float baseAng = (float)a * 2.0f * PI / (float)ARMS;
+                vortexArm(c, baseAng, minSide * 0.38f,
+                          minSide * 0.045f, minSide * 0.005f, 3.2f);
+            }
+            // Inner counter-rotating arms (smaller, opposite curl)
+            for (int a = 0; a < ARMS; ++a) {
+                const float baseAng = PI / 5.0f + (float)a * 2.0f * PI / (float)ARMS;
+                vortexArm(c, baseAng, minSide * 0.16f,
+                          minSide * 0.025f, minSide * 0.003f, -2.0f);
+            }
+            // Center pip + ring
+            polystar(c, 0.5f, (minSide*0.060f)/dstW, (minSide*0.060f)/dstH,
+                     (minSide*0.052f)/dstW, (minSide*0.052f)/dstH, 16, 0.0f, false);
+            polystar(c, 0.5f, (minSide*0.030f)/dstW, (minSide*0.030f)/dstH,
+                     (minSide*0.024f)/dstW, (minSide*0.024f)/dstH, 12, 0.0f, true);
+            polystar(c, 0.5f, (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
+                     (minSide*0.010f)/dstW, (minSide*0.010f)/dstH, 6, 0.0f, false);
+        };
+        vortex(cU_left);
+        vortex(cU_right);
+        if (drawChain) {
+            // Chain: small twin vortex arms forming wave-like motifs
+            const float aVtop = (bandPx + minSide * 0.040f + minSide * 0.012f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 9;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                // Place mini vortex arms; using a hack: re-center the
+                // "0.5f" by passing uPos as c (since vortexArm uses 0.5f
+                // hard-coded for the v-center). For chain we instead just
+                // draw small petal-pairs for simplicity.
+                petal(uPos, aVtop, -PI * 0.5f,
+                      (minSide*0.040f)/dstW, (minSide*0.040f)/dstH,
+                      (minSide*0.016f)/dstW, (minSide*0.016f)/dstH, false);
+                petal(uPos, aVtop,  PI * 0.5f,
+                      (minSide*0.040f)/dstW, (minSide*0.040f)/dstH,
+                      (minSide*0.016f)/dstW, (minSide*0.016f)/dstH, false);
+                petal(uPos, aVbot, -PI * 0.5f,
+                      (minSide*0.040f)/dstW, (minSide*0.040f)/dstH,
+                      (minSide*0.016f)/dstW, (minSide*0.016f)/dstH, false);
+                petal(uPos, aVbot,  PI * 0.5f,
+                      (minSide*0.040f)/dstW, (minSide*0.040f)/dstH,
+                      (minSide*0.016f)/dstW, (minSide*0.016f)/dstH, false);
             }
         }
     }
