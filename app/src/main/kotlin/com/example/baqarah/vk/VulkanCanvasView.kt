@@ -21,6 +21,7 @@ class VulkanCanvasView @JvmOverloads constructor(
     private val renderThread = HandlerThread("BaqarahVkRender", Process.THREAD_PRIORITY_DISPLAY)
     private val surfaceReady = AtomicBoolean(false)
     private val running = AtomicBoolean(false)
+    private val dirty = AtomicBoolean(true)
     private lateinit var renderHandler: android.os.Handler
 
     private sealed interface Pending {
@@ -83,12 +84,21 @@ class VulkanCanvasView @JvmOverloads constructor(
         holder.addCallback(this)
     }
 
+    // Throttle to ~60fps and skip redraws when nothing changed (scroll,
+    // upload, surface attach). Without this the loop hammered the GPU
+    // every millisecond, melting the device on heavy frames.
     private val renderLoop = object : Runnable {
         override fun run() {
             if (!running.get()) return
-            if (surfaceReady.get()) renderer.drawFrame()
-            renderHandler.post(this)
+            if (surfaceReady.get() && dirty.compareAndSet(true, false)) {
+                renderer.drawFrame()
+            }
+            renderHandler.postDelayed(this, FRAME_INTERVAL_MS)
         }
+    }
+
+    private fun requestRedraw() {
+        dirty.set(true)
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
@@ -99,6 +109,7 @@ class VulkanCanvasView @JvmOverloads constructor(
             surfaceReady.set(ok)
             if (ok) {
                 applyPending()
+                requestRedraw()
                 if (!running.getAndSet(true)) {
                     renderHandler.post(renderLoop)
                 }
@@ -113,7 +124,10 @@ class VulkanCanvasView @JvmOverloads constructor(
             val ok = renderer.attachSurface(surface)
             surfaceReady.set(ok)
             Log.i(TAG, "surfaceChanged ${width}x$height ok=$ok")
-            if (ok) applyPending()
+            if (ok) {
+                applyPending()
+                requestRedraw()
+            }
         }
     }
 
@@ -171,6 +185,7 @@ class VulkanCanvasView @JvmOverloads constructor(
                     p.firstLineDecorate, p.frameSeed,
                 )
                 Log.i(TAG, "uploadColrSurah h=$h")
+                requestRedraw()
                 post { onUploaded(h) }
             }
         }
@@ -180,6 +195,7 @@ class VulkanCanvasView @JvmOverloads constructor(
         maxScrollY = maxOf(0f, totalContentPx - height.toFloat())
         scrollY = scrollY.coerceIn(0f, maxScrollY)
         renderer.setScrollY(scrollY)
+        requestRedraw()
     }
 
     /** Reset scroll position to 0 (top of content). Used after swapping
@@ -188,6 +204,7 @@ class VulkanCanvasView @JvmOverloads constructor(
         if (!scroller.isFinished) scroller.forceFinished(true)
         scrollY = 0f
         renderer.setScrollY(0f)
+        requestRedraw()
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -262,6 +279,7 @@ class VulkanCanvasView @JvmOverloads constructor(
     private fun applyScrollDelta(dy: Float) {
         scrollY = (scrollY + dy).coerceIn(0f, maxScrollY)
         renderer.setScrollY(scrollY)
+        requestRedraw()
     }
 
     private val flingCallback = object : Choreographer.FrameCallback {
@@ -269,6 +287,7 @@ class VulkanCanvasView @JvmOverloads constructor(
             if (scroller.computeScrollOffset()) {
                 scrollY = scroller.currY.toFloat().coerceIn(0f, maxScrollY)
                 renderer.setScrollY(scrollY)
+                requestRedraw()
                 Choreographer.getInstance().postFrameCallback(this)
             }
         }
@@ -279,10 +298,12 @@ class VulkanCanvasView @JvmOverloads constructor(
             is Pending.Single -> {
                 val ok = renderer.uploadColrFromTtf(p.ttfBytes, p.codepoint, p.dstX, p.dstY, p.dstW, p.dstH)
                 Log.i(TAG, "uploadColrFromTtf ok=$ok cp=U+${p.codepoint.toString(16)}")
+                requestRedraw()
             }
             is Pending.Line -> {
                 val ok = renderer.uploadColrLineFromTtf(p.ttfBytes, p.codepoints, p.cursorX, p.baselineY, p.fontSizePx)
                 Log.i(TAG, "uploadColrLineFromTtf ok=$ok cps=${p.codepoints.size}")
+                requestRedraw()
             }
             is Pending.Surah -> {
                 // Surah upload is handled inline in setColrSurah to capture
@@ -306,5 +327,8 @@ class VulkanCanvasView @JvmOverloads constructor(
 
     companion object {
         private const val TAG = "BaqarahVkView"
+        // ~60fps cap. The render thread sleeps between frames and skips
+        // entirely when nothing is dirty.
+        private const val FRAME_INTERVAL_MS = 16L
     }
 }
