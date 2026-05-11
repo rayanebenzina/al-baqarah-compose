@@ -39,6 +39,7 @@ class VulkanCanvasView @JvmOverloads constructor(
             val topMarginPx: Float, val fontSizePx: Float,
             val lineSpacingPx: Float,
             val firstLineDecorate: Boolean,
+            val frameSeed: Int,
         ) : Pending
     }
     private var pending: Pending? = null
@@ -151,13 +152,14 @@ class VulkanCanvasView @JvmOverloads constructor(
         topMarginPx: Float, fontSizePx: Float,
         lineSpacingPx: Float,
         firstLineDecorate: Boolean = false,
+        frameSeed: Int = 0,
         onUploaded: (totalHeightPx: Float) -> Unit = {},
     ) {
         val p = Pending.Surah(
             ttfs, codepoints, fontIndices, lineStarts,
             screenWidthPx, leftMarginPx, rightMarginPx,
             topMarginPx, fontSizePx, lineSpacingPx,
-            firstLineDecorate,
+            firstLineDecorate, frameSeed,
         )
         pending = p
         renderHandler.post {
@@ -166,7 +168,7 @@ class VulkanCanvasView @JvmOverloads constructor(
                     p.ttfs, p.codepoints, p.fontIndices, p.lineStarts,
                     p.screenWidthPx, p.leftMarginPx, p.rightMarginPx,
                     p.topMarginPx, p.fontSizePx, p.lineSpacingPx,
-                    p.firstLineDecorate,
+                    p.firstLineDecorate, p.frameSeed,
                 )
                 Log.i(TAG, "uploadColrSurah h=$h")
                 post { onUploaded(h) }

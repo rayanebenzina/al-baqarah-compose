@@ -58,10 +58,11 @@ class NativeRenderer {
         topMarginPx: Float, fontSizePx: Float,
         lineSpacingPx: Float,
         firstLineDecorate: Boolean,
+        frameSeed: Int,
     ): Float = nUploadColrSurah(
         handle, ttfs, codepoints, fontIndices, lineStarts,
         screenWidthPx, leftMarginPx, rightMarginPx, topMarginPx, fontSizePx,
-        lineSpacingPx, firstLineDecorate,
+        lineSpacingPx, firstLineDecorate, frameSeed,
     )
 
     fun release() {
@@ -93,5 +94,6 @@ class NativeRenderer {
         topMarginPx: Float, fontSizePx: Float,
         lineSpacingPx: Float,
         firstLineDecorate: Boolean,
+        frameSeed: Int,
     ): Float
 }

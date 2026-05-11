@@ -46,6 +46,7 @@ class ReaderActivity : Activity() {
     private var mode = Mode.Mushaf
     private var currentPage = 1   // Mushaf mode index, 1..604
     private var currentSurah = 1  // Surah mode index, 1..114
+    private var frameSeed = 0     // Surah-title frame design selector; tap title to cycle.
 
     private lateinit var canvas: VulkanCanvasView
     private lateinit var titleView: TextView
@@ -99,6 +100,13 @@ class ReaderActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f,
             )
+            // Tap the title to cycle through frame styles (surah mode only).
+            setOnClickListener {
+                if (mode == Mode.Surah) {
+                    frameSeed += 1
+                    loadCurrent()
+                }
+            }
         }
         val prevBtn = Button(this).apply {
             text = "<"
@@ -215,6 +223,7 @@ class ReaderActivity : Activity() {
                     fontSizePx = fontSizePx,
                     lineSpacingPx = lineSpacingPx,
                     firstLineDecorate = (mode == Mode.Surah),
+                    frameSeed = frameSeed,
                 ) { totalHeightPx ->
                     canvas.scrollEnabled = (mode == Mode.Surah)
                     canvas.setContentHeight(totalHeightPx)

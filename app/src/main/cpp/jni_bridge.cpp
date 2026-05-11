@@ -158,7 +158,8 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
                std::vector<int>& bandsArr,
                std::vector<int>& curveIndicesArr,
                int& totalCurves,
-               int& totalLayers) {
+               int& totalLayers,
+               int seed) {
     const float minSide  = std::min(dstW, dstH);
 
     // Triple band: outer thick + gap + middle + gap + inner thin.
@@ -269,78 +270,205 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
         }
     };
 
-    // Two large floral end medallions at the short-edge centers.
-    // Each one stacks an outer star-burst with concentric hole/star
-    // layers and is wrapped in an outer ring of petals so the
-    // silhouette reads as a Mushaf rosette rather than a bare star.
+    // -------- Style dispatch --------
+    // The seed selects from a hand-tuned set of ornament presets so the
+    // host can flip between them to find the look it likes. All styles
+    // share the triple band above and emit two end medallions plus a
+    // chain along the long edges, but the motifs differ — stars,
+    // petals, sunburst rays, or interlaced girih shapes.
+    const int NUM_STYLES = 4;
+    const int style = ((unsigned)seed) % (unsigned)NUM_STYLES;
+    LOGI("emitFrame: seed=%d style=%d", seed, style);
+
     const float roseOutPx   = minSide * 0.36f;
     const float roseInsetPx = bandPx + roseOutPx + minSide * 0.020f;
-    {
-        // Star radii (px), shrinking toward the centre.
+    const float cU_left = roseInsetPx / dstW;
+    const float cU_right = 1.0f - cU_left;
+    const float chainMarginU = (roseInsetPx + roseOutPx + minSide * 0.05f) / dstW;
+    const bool drawChain = chainMarginU < 0.45f;
+
+    if (style == 0) {
+        // -------- Style 0: layered star burst with petal halo --------
         const float R1o = minSide * 0.36f, R1i = minSide * 0.22f;
         const float R2o = minSide * 0.21f, R2i = minSide * 0.14f;
         const float R3o = minSide * 0.13f, R3i = minSide * 0.070f;
         const float R4o = minSide * 0.065f, R4i = minSide * 0.038f;
         const float R5o = minSide * 0.034f, R5i = minSide * 0.014f;
-        // Petal ring (just outside the star burst, fills the corners).
-        const float petalLenPx     = minSide * 0.45f;
-        const float petalHalfWPx   = minSide * 0.040f;
-
+        const float petalLenPx   = minSide * 0.45f;
+        const float petalHalfWPx = minSide * 0.040f;
         auto medallion = [&](float c) {
-            // Outer petal halo — 16 long petals reaching toward the bands.
             for (int p = 0; p < 16; ++p) {
                 const float ang = (float)p * 2.0f * PI / 16.0f;
                 petal(c, 0.5f, ang,
                       petalLenPx / dstW, petalLenPx / dstH,
                       petalHalfWPx / dstW, petalHalfWPx / dstH, false);
             }
-            // Five-layer alternating star: fill / hole / fill / hole / fill.
-            polystar(c, 0.5f, R1o/dstW, R1o/dstH, R1i/dstW, R1i/dstH, 16, 0.0f,       false);
-            polystar(c, 0.5f, R2o/dstW, R2o/dstH, R2i/dstW, R2i/dstH, 12, PI/24.0f,  true);
-            polystar(c, 0.5f, R3o/dstW, R3o/dstH, R3i/dstW, R3i/dstH,  8, PI/16.0f,  false);
-            polystar(c, 0.5f, R4o/dstW, R4o/dstH, R4i/dstW, R4i/dstH,  6, 0.0f,       true);
-            polystar(c, 0.5f, R5o/dstW, R5o/dstH, R5i/dstW, R5i/dstH,  4, PI/8.0f,   false);
+            polystar(c, 0.5f, R1o/dstW, R1o/dstH, R1i/dstW, R1i/dstH, 16, 0.0f,      false);
+            polystar(c, 0.5f, R2o/dstW, R2o/dstH, R2i/dstW, R2i/dstH, 12, PI/24.0f, true);
+            polystar(c, 0.5f, R3o/dstW, R3o/dstH, R3i/dstW, R3i/dstH,  8, PI/16.0f, false);
+            polystar(c, 0.5f, R4o/dstW, R4o/dstH, R4i/dstW, R4i/dstH,  6, 0.0f,      true);
+            polystar(c, 0.5f, R5o/dstW, R5o/dstH, R5i/dstW, R5i/dstH,  4, PI/8.0f,  false);
         };
-        const float cU = roseInsetPx / dstW;
-        medallion(cU);
-        medallion(1.0f - cU);
-    }
-
-    // Long-edge ornament chain: alternating 8-pointed stars and small
-    // petal pairs filling the strip between the medallions, top & bottom.
-    const float chainOutPx  = minSide * 0.050f;
-    const float chainInPx   = minSide * 0.022f;
-    const float chainInsetVPx = bandPx + chainOutPx + minSide * 0.015f;
-    {
-        // Range along U: between the medallions, with a small margin so
-        // the chain doesn't crash into the petal halos.
-        const float marginU = (roseInsetPx + roseOutPx + minSide * 0.05f) / dstW;
-        if (marginU < 0.45f) {
-            const float lowU = marginU;
-            const float highU = 1.0f - marginU;
-            const float aVtop = chainInsetVPx / dstH;
-            const float aVbot = 1.0f - chainInsetVPx / dstH;
-            const int N = 7;
-            const float roU = chainOutPx / dstW, roV = chainOutPx / dstH;
-            const float riU = chainInPx / dstW,  riV = chainInPx / dstH;
+        medallion(cU_left);
+        medallion(cU_right);
+        if (drawChain) {
+            const float chainOutPx = minSide * 0.050f;
+            const float chainInPx  = minSide * 0.022f;
+            const float aVtop = (bandPx + chainOutPx + minSide * 0.015f) / dstH;
+            const float aVbot = 1.0f - aVtop;
             const float petLenU = (chainOutPx * 0.9f) / dstW;
             const float petLenV = (chainOutPx * 0.9f) / dstH;
             const float petHWU  = (chainOutPx * 0.18f) / dstW;
             const float petHWV  = (chainOutPx * 0.18f) / dstH;
+            const int N = 7;
             for (int k = 0; k < N; ++k) {
                 const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = lowU + t * (highU - lowU);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
                 if ((k & 1) == 0) {
-                    // 8-pointed star
-                    polystar(uPos, aVtop, roU, roV, riU, riV, 8, 0.0f, false);
-                    polystar(uPos, aVbot, roU, roV, riU, riV, 8, 0.0f, false);
+                    polystar(uPos, aVtop, chainOutPx/dstW, chainOutPx/dstH,
+                             chainInPx/dstW, chainInPx/dstH, 8, 0.0f, false);
+                    polystar(uPos, aVbot, chainOutPx/dstW, chainOutPx/dstH,
+                             chainInPx/dstW, chainInPx/dstH, 8, 0.0f, false);
                 } else {
-                    // Pair of petals (one up, one down) — a small floral knot
-                    petal(uPos, aVtop, -PI * 0.5f, petLenU, petLenV, petHWU, petHWV, false);
-                    petal(uPos, aVtop,  PI * 0.5f, petLenU, petLenV, petHWU, petHWV, false);
-                    petal(uPos, aVbot, -PI * 0.5f, petLenU, petLenV, petHWU, petHWV, false);
-                    petal(uPos, aVbot,  PI * 0.5f, petLenU, petLenV, petHWU, petHWV, false);
+                    petal(uPos, aVtop, -PI*0.5f, petLenU, petLenV, petHWU, petHWV, false);
+                    petal(uPos, aVtop,  PI*0.5f, petLenU, petLenV, petHWU, petHWV, false);
+                    petal(uPos, aVbot, -PI*0.5f, petLenU, petLenV, petHWU, petHWV, false);
+                    petal(uPos, aVbot,  PI*0.5f, petLenU, petLenV, petHWU, petHWV, false);
                 }
+            }
+        }
+    } else if (style == 1) {
+        // -------- Style 1: pure floral rosette (nested petal rings) --------
+        auto floral = [&](float c) {
+            // Outer 16 long thin petals
+            const float L1 = minSide * 0.42f, W1 = minSide * 0.030f;
+            for (int p = 0; p < 16; ++p) {
+                const float ang = (float)p * 2.0f * PI / 16.0f;
+                petal(c, 0.5f, ang, L1/dstW, L1/dstH, W1/dstW, W1/dstH, false);
+            }
+            // Middle 8 fat petals, rotated 22.5° (between outer petals)
+            const float L2 = minSide * 0.26f, W2 = minSide * 0.060f;
+            for (int p = 0; p < 8; ++p) {
+                const float ang = PI/8.0f + (float)p * 2.0f * PI / 8.0f;
+                petal(c, 0.5f, ang, L2/dstW, L2/dstH, W2/dstW, W2/dstH, false);
+            }
+            // Inner 6 small fat petals
+            const float L3 = minSide * 0.14f, W3 = minSide * 0.048f;
+            for (int p = 0; p < 6; ++p) {
+                const float ang = (float)p * 2.0f * PI / 6.0f;
+                petal(c, 0.5f, ang, L3/dstW, L3/dstH, W3/dstW, W3/dstH, false);
+            }
+            // Center hole + tiny pip
+            polystar(c, 0.5f, (minSide*0.045f)/dstW, (minSide*0.045f)/dstH,
+                     (minSide*0.040f)/dstW, (minSide*0.040f)/dstH, 12, 0.0f, true);
+            polystar(c, 0.5f, (minSide*0.020f)/dstW, (minSide*0.020f)/dstH,
+                     (minSide*0.016f)/dstW, (minSide*0.016f)/dstH, 8, 0.0f, false);
+        };
+        floral(cU_left);
+        floral(cU_right);
+        if (drawChain) {
+            // Chain: 4-petal flowers (cross pattern)
+            const float L = minSide * 0.045f, W = minSide * 0.014f;
+            const float aVtop = (bandPx + L + minSide * 0.010f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 11;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                for (int q = 0; q < 4; ++q) {
+                    const float ang = (float)q * PI * 0.5f;
+                    petal(uPos, aVtop, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                    petal(uPos, aVbot, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                }
+            }
+        }
+    } else if (style == 2) {
+        // -------- Style 2: sunburst rays + inner flower --------
+        auto sunburst = [&](float c) {
+            // 24 thin long radial spikes — outer "polystar" with very small inner radius
+            polystar(c, 0.5f,
+                     (minSide*0.43f)/dstW, (minSide*0.43f)/dstH,
+                     (minSide*0.060f)/dstW, (minSide*0.060f)/dstH,
+                     24, 0.0f, false);
+            // Ring cutout (polygon hole) at ~0.16
+            polystar(c, 0.5f,
+                     (minSide*0.16f)/dstW, (minSide*0.16f)/dstH,
+                     (minSide*0.15f)/dstW, (minSide*0.15f)/dstH,
+                     20, 0.0f, true);
+            // 8-petal inner flower
+            const float L = minSide * 0.13f, W = minSide * 0.032f;
+            for (int p = 0; p < 8; ++p) {
+                const float ang = (float)p * 2.0f * PI / 8.0f;
+                petal(c, 0.5f, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
+            }
+            // Center small star
+            polystar(c, 0.5f,
+                     (minSide*0.035f)/dstW, (minSide*0.035f)/dstH,
+                     (minSide*0.015f)/dstW, (minSide*0.015f)/dstH,
+                     6, 0.0f, false);
+        };
+        sunburst(cU_left);
+        sunburst(cU_right);
+        if (drawChain) {
+            // Chain: small filled circles (polygon w/ matched radii)
+            const float R = minSide * 0.026f;
+            const float aVtop = (bandPx + R + minSide * 0.018f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 11;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                polystar(uPos, aVtop, R/dstW, R/dstH,
+                         R*0.85f/dstW, R*0.85f/dstH, 12, 0.0f, false);
+                polystar(uPos, aVbot, R/dstW, R/dstH,
+                         R*0.85f/dstW, R*0.85f/dstH, 12, 0.0f, false);
+            }
+        }
+    } else {
+        // -------- Style 3: girih (3 overlapping rotated 8-point stars) --------
+        auto girih = [&](float c) {
+            // 3 overlapping 8-point stars, rotated 15° each = 24-rayed look
+            for (int r = 0; r < 3; ++r) {
+                const float phase = (float)r * PI / 12.0f;
+                polystar(c, 0.5f,
+                         (minSide*0.36f)/dstW, (minSide*0.36f)/dstH,
+                         (minSide*0.20f)/dstW, (minSide*0.20f)/dstH,
+                         8, phase, false);
+            }
+            // Hexagonal hole at radius ~0.13
+            polystar(c, 0.5f,
+                     (minSide*0.14f)/dstW, (minSide*0.14f)/dstH,
+                     (minSide*0.12f)/dstW, (minSide*0.12f)/dstH,
+                     6, 0.0f, true);
+            // Inner 12-point star
+            polystar(c, 0.5f,
+                     (minSide*0.10f)/dstW, (minSide*0.10f)/dstH,
+                     (minSide*0.045f)/dstW, (minSide*0.045f)/dstH,
+                     12, 0.0f, false);
+            // Tiny center hole + pip
+            polystar(c, 0.5f,
+                     (minSide*0.030f)/dstW, (minSide*0.030f)/dstH,
+                     (minSide*0.022f)/dstW, (minSide*0.022f)/dstH,
+                     6, PI/6.0f, true);
+        };
+        girih(cU_left);
+        girih(cU_right);
+        if (drawChain) {
+            // Chain: alternating 6-point stars and small diamonds
+            const float R = minSide * 0.038f;
+            const float aVtop = (bandPx + R + minSide * 0.012f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 9;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                const bool isStar = (k & 1) == 0;
+                const int pts = isStar ? 6 : 4;
+                const float ph = isStar ? 0.0f : PI / 4.0f;
+                polystar(uPos, aVtop, R/dstW, R/dstH,
+                         R*0.4f/dstW, R*0.4f/dstH, pts, ph, false);
+                polystar(uPos, aVbot, R/dstW, R/dstH,
+                         R*0.4f/dstW, R*0.4f/dstH, pts, ph, false);
             }
         }
     }
@@ -390,7 +518,7 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
     jfloat screenWidthPx, jfloat leftMarginPx, jfloat rightMarginPx,
     jfloat topMarginPx, jfloat fontSizePx,
     jfloat lineSpacingPx,
-    jboolean firstLineDecorate) {
+    jboolean firstLineDecorate, jint frameSeed) {
     auto* r = asRenderer(handle);
     if (!r || !ttfs || !codepoints || !fontIndices || !lineStarts) return -1.0f;
 
@@ -612,7 +740,8 @@ Java_com_example_baqarah_vk_NativeRenderer_nUploadColrSurah(
                       0xFF281E14u,  // dark warm brown, matches glyph fallback
                       allCurves, layerData, layerRects,
                       bandsArr, curveIndicesArr,
-                      totalCurves, totalLayers);
+                      totalCurves, totalLayers,
+                      (int)frameSeed);
         }
 
         baselineY += lineSpacingPx;
