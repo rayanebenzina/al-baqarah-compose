@@ -276,7 +276,7 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
     // share the triple band above and emit two end medallions plus a
     // chain along the long edges, but the motifs differ — stars,
     // petals, sunburst rays, or interlaced girih shapes.
-    const int NUM_STYLES = 31;
+    const int NUM_STYLES = 34;
     const int style = ((unsigned)seed) % (unsigned)NUM_STYLES;
     LOGI("emitFrame: seed=%d style=%d", seed, style);
 
@@ -2376,6 +2376,194 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
                 petal(uPos, aVtop, -PI * 0.75f, L/dstW, L/dstH, W/dstW, W/dstH, false);
                 petal(uPos, aVbot,  PI * 0.25f, L/dstW, L/dstH, W/dstW, W/dstH, false);
                 petal(uPos, aVbot,  PI * 0.75f, L/dstW, L/dstH, W/dstW, W/dstH, false);
+            }
+        }
+    } else if (style == 31) {
+        // -------- Style 31: Self-similar bud chain --------
+        // Six log-spiral chains of teardrop buds emanating from the
+        // centre. Each bud is rotated to follow the local spiral tangent
+        // and scales with its radial distance, so the whole shape stays
+        // self-similar across radii.
+        auto budChain = [&](float c) {
+            const int BUDS = 10;
+            const float aS = minSide * 0.06f;
+            const float bS = 0.32f;
+            for (int dir = 0; dir < 6; ++dir) {
+                const float anchorAng = (float)dir * 2.0f * PI / 6.0f;
+                for (int i = 0; i < BUDS; ++i) {
+                    const float th = (float)i * 0.45f;
+                    const float r = aS * expf(bS * th);
+                    const float xC = r * cosf(th + anchorAng);
+                    const float yC = r * sinf(th + anchorAng);
+                    const float tx = cosf(th + anchorAng) - bS * sinf(th + anchorAng);
+                    const float ty = sinf(th + anchorAng) + bS * cosf(th + anchorAng);
+                    const float tang = atan2f(ty, tx);
+                    const float Lf = std::min(r * 0.55f, minSide * 0.07f);
+                    const float Wf = Lf * 0.32f;
+                    petal(c + xC / dstW, 0.5f + yC / dstH, tang,
+                          Lf/dstW, Lf/dstH, Wf/dstW, Wf/dstH, false);
+                }
+            }
+            // Centre 6-petal hub + tiny star
+            const float Lh = minSide * 0.045f, Wh = minSide * 0.014f;
+            for (int p = 0; p < 6; ++p) {
+                const float ang = (float)p * 2.0f * PI / 6.0f + PI / 6.0f;
+                petal(c, 0.5f, ang, Lh/dstW, Lh/dstH, Wh/dstW, Wh/dstH, false);
+            }
+            polystar(c, 0.5f,
+                     (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
+                     (minSide*0.010f)/dstW, (minSide*0.010f)/dstH,
+                     6, 0.0f, true);
+        };
+        budChain(cU_left);
+        budChain(cU_right);
+        if (drawChain) {
+            // Chain: bud cascade — vertical buds with a slight size
+            // taper (peaks at the middle of the band).
+            const float aVtop = (bandPx + minSide * 0.025f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 11;
+            const float u0 = chainMarginU;
+            const float u1 = 1.0f - chainMarginU;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = u0 + t * (u1 - u0);
+                const float scale = 1.0f - 0.25f * fabsf(2.0f * t - 1.0f);
+                const float L = minSide * 0.030f * scale;
+                const float W = L * 0.32f;
+                petal(uPos, aVtop, -PI*0.5f, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                petal(uPos, aVbot,  PI*0.5f, L/dstW, L/dstH, W/dstW, W/dstH, false);
+            }
+        }
+    } else if (style == 32) {
+        // -------- Style 32: Damascus curvy interlace --------
+        // Two counter-rotating 8-pointed stars stacked offset, plus a
+        // 16-petal inner ring and two thin band rings — produces a
+        // woven-ribbon look reminiscent of Mamluk metalwork.
+        auto interlace = [&](float c) {
+            const float R1o = minSide * 0.36f, R1i = minSide * 0.16f;
+            const float R2o = minSide * 0.30f, R2i = minSide * 0.12f;
+            polystar(c, 0.5f, R1o/dstW, R1o/dstH, R1i/dstW, R1i/dstH,
+                     8, 0.0f, false);
+            polystar(c, 0.5f, R2o/dstW, R2o/dstH, R2i/dstW, R2i/dstH,
+                     8, PI/8.0f, true);
+            const float L = minSide * 0.10f, W = minSide * 0.018f;
+            for (int p = 0; p < 16; ++p) {
+                const float ang = (float)p * 2.0f * PI / 16.0f + PI / 16.0f;
+                petal(c, 0.5f, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
+            }
+            polystar(c, 0.5f,
+                     (minSide*0.090f)/dstW, (minSide*0.090f)/dstH,
+                     (minSide*0.078f)/dstW, (minSide*0.078f)/dstH,
+                     24, 0.0f, false);
+            polystar(c, 0.5f,
+                     (minSide*0.055f)/dstW, (minSide*0.055f)/dstH,
+                     (minSide*0.045f)/dstW, (minSide*0.045f)/dstH,
+                     20, 0.0f, true);
+            const float Lc = minSide * 0.035f, Wc = minSide * 0.012f;
+            for (int p = 0; p < 8; ++p) {
+                const float ang = (float)p * 2.0f * PI / 8.0f;
+                petal(c, 0.5f, ang, Lc/dstW, Lc/dstH, Wc/dstW, Wc/dstH, false);
+            }
+            polystar(c, 0.5f,
+                     (minSide*0.011f)/dstW, (minSide*0.011f)/dstH,
+                     (minSide*0.006f)/dstW, (minSide*0.006f)/dstH,
+                     4, PI/4.0f, false);
+        };
+        interlace(cU_left);
+        interlace(cU_right);
+        if (drawChain) {
+            const float aVtop = (bandPx + minSide * 0.025f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 11;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                if ((k & 1) == 0) {
+                    polystar(uPos, aVtop,
+                             (minSide*0.022f)/dstW, (minSide*0.022f)/dstH,
+                             (minSide*0.010f)/dstW, (minSide*0.010f)/dstH,
+                             8, 0.0f, false);
+                    polystar(uPos, aVbot,
+                             (minSide*0.022f)/dstW, (minSide*0.022f)/dstH,
+                             (minSide*0.010f)/dstW, (minSide*0.010f)/dstH,
+                             8, 0.0f, false);
+                } else {
+                    polystar(uPos, aVtop,
+                             (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
+                             (minSide*0.007f)/dstW, (minSide*0.007f)/dstH,
+                             4, PI/4.0f, false);
+                    polystar(uPos, aVbot,
+                             (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
+                             (minSide*0.007f)/dstW, (minSide*0.007f)/dstH,
+                             4, PI/4.0f, false);
+                }
+            }
+        }
+    } else if (style == 33) {
+        // -------- Style 33: Peony rosette --------
+        // Four concentric rings of overlapping rounded petals; each ring
+        // is offset by half its angular step from the next so the petals
+        // interleave like a real layered bloom. Centre is a tight stamen
+        // cluster of tiny diamonds around a small star.
+        auto peony = [&](float c) {
+            const float L1 = minSide * 0.32f, W1 = minSide * 0.095f;
+            for (int p = 0; p < 14; ++p) {
+                const float ang = (float)p * 2.0f * PI / 14.0f;
+                petal(c, 0.5f, ang, L1/dstW, L1/dstH, W1/dstW, W1/dstH, false);
+            }
+            const float L2 = minSide * 0.23f, W2 = minSide * 0.078f;
+            for (int p = 0; p < 11; ++p) {
+                const float ang = (PI / 11.0f) + (float)p * 2.0f * PI / 11.0f;
+                petal(c, 0.5f, ang, L2/dstW, L2/dstH, W2/dstW, W2/dstH, false);
+            }
+            const float L3 = minSide * 0.15f, W3 = minSide * 0.060f;
+            for (int p = 0; p < 9; ++p) {
+                const float ang = (float)p * 2.0f * PI / 9.0f;
+                petal(c, 0.5f, ang, L3/dstW, L3/dstH, W3/dstW, W3/dstH, false);
+            }
+            const float L4 = minSide * 0.09f, W4 = minSide * 0.040f;
+            for (int p = 0; p < 7; ++p) {
+                const float ang = (PI / 7.0f) + (float)p * 2.0f * PI / 7.0f;
+                petal(c, 0.5f, ang, L4/dstW, L4/dstH, W4/dstW, W4/dstH, false);
+            }
+            polystar(c, 0.5f,
+                     (minSide*0.040f)/dstW, (minSide*0.040f)/dstH,
+                     (minSide*0.026f)/dstW, (minSide*0.026f)/dstH,
+                     10, 0.0f, true);
+            for (int p = 0; p < 12; ++p) {
+                const float ang = (float)p * 2.0f * PI / 12.0f;
+                const float rr = minSide * 0.028f;
+                const float xC = rr * cosf(ang);
+                const float yC = rr * sinf(ang);
+                polystar(c + xC / dstW, 0.5f + yC / dstH,
+                         (minSide*0.006f)/dstW, (minSide*0.006f)/dstH,
+                         (minSide*0.003f)/dstW, (minSide*0.003f)/dstH,
+                         4, 0.0f, false);
+            }
+        };
+        peony(cU_left);
+        peony(cU_right);
+        if (drawChain) {
+            // Chain: layered 5-petal florets with tiny inner 3-petal
+            const float aVtop = (bandPx + minSide * 0.025f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 11;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                const float L = minSide * 0.025f, W = minSide * 0.011f;
+                for (int q = 0; q < 5; ++q) {
+                    const float ang = (float)q * 2.0f * PI / 5.0f;
+                    petal(uPos, aVtop, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                    petal(uPos, aVbot, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                }
+                const float Ls = L * 0.55f, Ws = W;
+                for (int q = 0; q < 3; ++q) {
+                    const float ang = (PI/3.0f) + (float)q * 2.0f * PI / 3.0f;
+                    petal(uPos, aVtop, ang, Ls/dstW, Ls/dstH, Ws/dstW, Ws/dstH, false);
+                    petal(uPos, aVbot, ang, Ls/dstW, Ls/dstH, Ws/dstW, Ws/dstH, false);
+                }
             }
         }
     }
