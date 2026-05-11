@@ -276,7 +276,7 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
     // share the triple band above and emit two end medallions plus a
     // chain along the long edges, but the motifs differ — stars,
     // petals, sunburst rays, or interlaced girih shapes.
-    const int NUM_STYLES = 28;
+    const int NUM_STYLES = 31;
     const int style = ((unsigned)seed) % (unsigned)NUM_STYLES;
     LOGI("emitFrame: seed=%d style=%d", seed, style);
 
@@ -2092,6 +2092,290 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
                           L/dstW, L/dstH,
                           (L*0.30f)/dstW, (L*0.30f)/dstH, false);
                 }
+            }
+        }
+    } else if (style == 28) {
+        // -------- Style 28: Spirograph hypotrochoid --------
+        // Hypotrochoid: x = (R−r)cos(t) + d·cos(((R−r)/r)·t),
+        //               y = (R−r)sin(t) − d·sin(((R−r)/r)·t).
+        // With R=5, r=3, d=5 the curve closes after 3 revolutions and
+        // makes a classic 2-lobed asteroid; R=5,r=2,d=4 → a 3-cusp star.
+        auto spirograph = [&](float c) {
+            const float SCALE = minSide * 0.045f;
+            // (R, r, d) tuned for a dense rosette with 5 lobes
+            const float R = 5.0f, r = 2.0f, d = 4.0f;
+            const float thickness = minSide * 0.010f;
+            const int SEG = 360;
+            // Period: when t = 2π·r/gcd(R,r) = 2π since gcd(5,2)=1 →
+            // period = 2π·r = 4π. We do 5 full turns for a clean trace.
+            const float tMax = 2.0f * PI * r;
+            float prevUO = 0, prevVO = 0, prevUI = 0, prevVI = 0;
+            for (int i = 0; i <= SEG; ++i) {
+                const float t = (float)i * tMax / (float)SEG;
+                const float k = (R - r) / r;
+                const float xC = SCALE * ((R - r) * cosf(t) + d * cosf(k * t));
+                const float yC = SCALE * ((R - r) * sinf(t) - d * sinf(k * t));
+                // Tangent
+                const float dx = SCALE * (-(R - r) * sinf(t) - d * k * sinf(k * t));
+                const float dy = SCALE * ( (R - r) * cosf(t) - d * k * cosf(k * t));
+                const float dlen = std::max(1e-6f, sqrtf(dx*dx + dy*dy));
+                const float perpX = -dy / dlen;
+                const float perpY =  dx / dlen;
+                const float uO = c + (xC + perpX * thickness) / dstW;
+                const float vO = 0.5f + (yC + perpY * thickness) / dstH;
+                const float uI = c + (xC - perpX * thickness) / dstW;
+                const float vI = 0.5f + (yC - perpY * thickness) / dstH;
+                if (i > 0) {
+                    line(prevUO, prevVO, uO, vO);
+                    line(uI, vI, prevUI, prevVI);
+                }
+                prevUO = uO; prevVO = vO;
+                prevUI = uI; prevVI = vI;
+            }
+            // Inner ring + 5 petals to mark the lobe centres
+            polystar(c, 0.5f,
+                     (minSide*0.045f)/dstW, (minSide*0.045f)/dstH,
+                     (minSide*0.034f)/dstW, (minSide*0.034f)/dstH,
+                     10, 0.0f, true);
+            const float Lp = minSide * 0.060f, Wp = minSide * 0.016f;
+            for (int p = 0; p < 5; ++p) {
+                const float ang = (float)p * 2.0f * PI / 5.0f;
+                petal(c, 0.5f, ang, Lp/dstW, Lp/dstH, Wp/dstW, Wp/dstH, false);
+            }
+            // Centre tiny pip
+            polystar(c, 0.5f,
+                     (minSide*0.015f)/dstW, (minSide*0.015f)/dstH,
+                     (minSide*0.008f)/dstW, (minSide*0.008f)/dstH,
+                     5, 0.0f, false);
+        };
+        spirograph(cU_left);
+        spirograph(cU_right);
+        if (drawChain) {
+            // Chain: small 5-petal florets
+            const float L = minSide * 0.030f, W = minSide * 0.010f;
+            const float aVtop = (bandPx + L + minSide * 0.010f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 11;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                for (int q = 0; q < 5; ++q) {
+                    const float ang = (float)q * 2.0f * PI / 5.0f;
+                    petal(uPos, aVtop, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                    petal(uPos, aVbot, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                }
+            }
+        }
+    } else if (style == 29) {
+        // -------- Style 29: Sine vine wreath --------
+        // Sine wave wrapped around a circle: r(θ) = R + A·sin(N·θ). With
+        // small A and large N the curve undulates around a ring, giving a
+        // creeping-vine silhouette. Pairs of leaves sprout at every peak.
+        auto sineVine = [&](float c) {
+            const float R = minSide * 0.25f;
+            const float A = minSide * 0.035f;
+            const int N = 12;       // number of bumps per turn
+            const int SEG = 240;
+            const float thickness = minSide * 0.012f;
+            float prevUO = 0, prevVO = 0, prevUI = 0, prevVI = 0;
+            for (int i = 0; i <= SEG; ++i) {
+                const float th = (float)i * 2.0f * PI / (float)SEG;
+                const float rr = R + A * sinf((float)N * th);
+                const float xC = rr * cosf(th);
+                const float yC = rr * sinf(th);
+                // Tangent: d(r·cosθ)/dθ = r'·cosθ − r·sinθ
+                const float drdth = A * (float)N * cosf((float)N * th);
+                const float dx = drdth * cosf(th) - rr * sinf(th);
+                const float dy = drdth * sinf(th) + rr * cosf(th);
+                const float dlen = std::max(1e-6f, sqrtf(dx*dx + dy*dy));
+                const float perpX = -dy / dlen;
+                const float perpY =  dx / dlen;
+                const float uO = c + (xC + perpX * thickness) / dstW;
+                const float vO = 0.5f + (yC + perpY * thickness) / dstH;
+                const float uI = c + (xC - perpX * thickness) / dstW;
+                const float vI = 0.5f + (yC - perpY * thickness) / dstH;
+                if (i > 0) {
+                    line(prevUO, prevVO, uO, vO);
+                    line(uI, vI, prevUI, prevVI);
+                }
+                prevUO = uO; prevVO = vO;
+                prevUI = uI; prevVI = vI;
+            }
+            // Leaves at every peak (θ where sin(N·θ) = 1)
+            const float Lleaf = minSide * 0.055f, Wleaf = minSide * 0.018f;
+            for (int p = 0; p < N; ++p) {
+                const float th = (PI / (2.0f * (float)N)) + (float)p * 2.0f * PI / (float)N;
+                const float rPeak = R + A;
+                const float xC = rPeak * cosf(th);
+                const float yC = rPeak * sinf(th);
+                petal(c + xC / dstW, 0.5f + yC / dstH, th,
+                      Lleaf/dstW, Lleaf/dstH, Wleaf/dstW, Wleaf/dstH, false);
+            }
+            // Inner concentric vine (smaller wreath, counter-bumped)
+            float pUO = 0, pVO = 0, pUI = 0, pVI = 0;
+            const float R2 = minSide * 0.10f;
+            const float A2 = minSide * 0.018f;
+            const int N2 = 8;
+            const float thickness2 = minSide * 0.008f;
+            for (int i = 0; i <= SEG; ++i) {
+                const float th = (float)i * 2.0f * PI / (float)SEG;
+                const float rr = R2 + A2 * cosf((float)N2 * th);
+                const float xC = rr * cosf(th);
+                const float yC = rr * sinf(th);
+                const float drdth = -A2 * (float)N2 * sinf((float)N2 * th);
+                const float dx = drdth * cosf(th) - rr * sinf(th);
+                const float dy = drdth * sinf(th) + rr * cosf(th);
+                const float dlen = std::max(1e-6f, sqrtf(dx*dx + dy*dy));
+                const float perpX = -dy / dlen;
+                const float perpY =  dx / dlen;
+                const float uO = c + (xC + perpX * thickness2) / dstW;
+                const float vO = 0.5f + (yC + perpY * thickness2) / dstH;
+                const float uI = c + (xC - perpX * thickness2) / dstW;
+                const float vI = 0.5f + (yC - perpY * thickness2) / dstH;
+                if (i > 0) {
+                    line(pUO, pVO, uO, vO);
+                    line(uI, vI, pUI, pVI);
+                }
+                pUO = uO; pVO = vO;
+                pUI = uI; pVI = vI;
+            }
+            // Centre bud
+            polystar(c, 0.5f,
+                     (minSide*0.025f)/dstW, (minSide*0.025f)/dstH,
+                     (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
+                     6, 0.0f, false);
+        };
+        sineVine(cU_left);
+        sineVine(cU_right);
+        if (drawChain) {
+            // Chain: undulating sine waveline between medallions
+            const float aVtop = (bandPx + minSide * 0.025f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const float amp = minSide * 0.015f;
+            const float thickness = minSide * 0.004f;
+            const int SEG = 96;
+            const float u0 = chainMarginU;
+            const float u1 = 1.0f - chainMarginU;
+            for (int row = 0; row < 2; ++row) {
+                const float vPos = (row == 0) ? aVtop : aVbot;
+                float prevUO = 0, prevVO = 0, prevUI = 0, prevVI = 0;
+                for (int i = 0; i <= SEG; ++i) {
+                    const float t = (float)i / (float)SEG;
+                    const float u = u0 + t * (u1 - u0);
+                    const float yC = amp * sinf(t * 6.0f * PI);
+                    // perpendicular = (0, 1) approx (since the waveline
+                    // runs left-to-right we can take vertical perpendicular).
+                    const float uO = u;
+                    const float vO = vPos + (yC + thickness) / dstH;
+                    const float uI = u;
+                    const float vI = vPos + (yC - thickness) / dstH;
+                    if (i > 0) {
+                        line(prevUO, prevVO, uO, vO);
+                        line(uI, vI, prevUI, prevVI);
+                    }
+                    prevUO = uO; prevVO = vO;
+                    prevUI = uI; prevVI = vI;
+                }
+            }
+            // Little leaves at the wave peaks
+            const float L = minSide * 0.018f, W = minSide * 0.008f;
+            for (int k = 0; k < 6; ++k) {
+                const float t = (2.0f * (float)k + 1.0f) / 12.0f;
+                const float u = u0 + t * (u1 - u0);
+                petal(u, aVtop - L * 0.6f / dstH, -PI*0.5f,
+                      L/dstW, L/dstH, W/dstW, W/dstH, false);
+                petal(u, aVbot + L * 0.6f / dstH,  PI*0.5f,
+                      L/dstW, L/dstH, W/dstW, W/dstH, false);
+            }
+        }
+    } else if (style == 30) {
+        // -------- Style 30: Filigree corner curls --------
+        // Bezier-style S-curve curls anchored at the medallion centre,
+        // each terminating in a small floret. Six curls radiate out,
+        // suggesting hand-drawn calligraphic filigree.
+        auto filigree = [&](float c) {
+            const float R0 = minSide * 0.06f;     // start radius
+            const float R1 = minSide * 0.32f;     // end radius
+            const float thickness = minSide * 0.010f;
+            const int SEG = 40;
+            const int CURLS = 6;
+            for (int p = 0; p < CURLS; ++p) {
+                const float baseAng = (float)p * 2.0f * PI / (float)CURLS;
+                // Curl traces a path where radius grows from R0 to R1 and
+                // angle deviates ±swirl as it goes outward.
+                const float swirl = PI * 0.55f;
+                float prevUO = 0, prevVO = 0, prevUI = 0, prevVI = 0;
+                for (int i = 0; i <= SEG; ++i) {
+                    const float t = (float)i / (float)SEG;
+                    const float rr = R0 + (R1 - R0) * t;
+                    const float ang = baseAng + swirl * sinf(t * PI);
+                    const float xC = rr * cosf(ang);
+                    const float yC = rr * sinf(ang);
+                    // Tangent (approximate by forward diff would be cleaner;
+                    // analytic: dx/dt = dr/dt·cos − r·dang/dt·sin etc).
+                    const float drdt = (R1 - R0);
+                    const float dangdt = swirl * PI * cosf(t * PI);
+                    const float dx = drdt * cosf(ang) - rr * dangdt * sinf(ang);
+                    const float dy = drdt * sinf(ang) + rr * dangdt * cosf(ang);
+                    const float dlen = std::max(1e-6f, sqrtf(dx*dx + dy*dy));
+                    const float perpX = -dy / dlen;
+                    const float perpY =  dx / dlen;
+                    // Thickness tapers: thick at base, thin at tip
+                    const float th = thickness * (1.0f - 0.7f * t);
+                    const float uO = c + (xC + perpX * th) / dstW;
+                    const float vO = 0.5f + (yC + perpY * th) / dstH;
+                    const float uI = c + (xC - perpX * th) / dstW;
+                    const float vI = 0.5f + (yC - perpY * th) / dstH;
+                    if (i > 0) {
+                        line(prevUO, prevVO, uO, vO);
+                        line(uI, vI, prevUI, prevVI);
+                    }
+                    prevUO = uO; prevVO = vO;
+                    prevUI = uI; prevVI = vI;
+                }
+                // Tip floret: 3 tiny petals
+                const float tipAng = baseAng + swirl * sinf(PI);
+                const float tipX = R1 * cosf(tipAng);
+                const float tipY = R1 * sinf(tipAng);
+                const float Lt = minSide * 0.030f, Wt = minSide * 0.011f;
+                for (int q = 0; q < 3; ++q) {
+                    const float la = tipAng + ((float)q - 1.0f) * 0.6f;
+                    petal(c + tipX / dstW, 0.5f + tipY / dstH, la,
+                          Lt/dstW, Lt/dstH, Wt/dstW, Wt/dstH, false);
+                }
+            }
+            // Centre boss: dense 8-petal flower
+            const float Lh = minSide * 0.055f, Wh = minSide * 0.018f;
+            for (int q = 0; q < 8; ++q) {
+                const float ang = (float)q * 2.0f * PI / 8.0f;
+                petal(c, 0.5f, ang, Lh/dstW, Lh/dstH, Wh/dstW, Wh/dstH, false);
+            }
+            polystar(c, 0.5f,
+                     (minSide*0.026f)/dstW, (minSide*0.026f)/dstH,
+                     (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
+                     8, 0.0f, true);
+            polystar(c, 0.5f,
+                     (minSide*0.010f)/dstW, (minSide*0.010f)/dstH,
+                     (minSide*0.005f)/dstW, (minSide*0.005f)/dstH,
+                     5, 0.0f, false);
+        };
+        filigree(cU_left);
+        filigree(cU_right);
+        if (drawChain) {
+            // Chain: small swirl-pairs (back-to-back curls)
+            const float aVtop = (bandPx + minSide * 0.030f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const float L = minSide * 0.030f;
+            const int N = 9;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                const float W = L * 0.30f;
+                // Two opposing curls forming a back-to-back C pair
+                petal(uPos, aVtop, -PI * 0.25f, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                petal(uPos, aVtop, -PI * 0.75f, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                petal(uPos, aVbot,  PI * 0.25f, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                petal(uPos, aVbot,  PI * 0.75f, L/dstW, L/dstH, W/dstW, W/dstH, false);
             }
         }
     }
