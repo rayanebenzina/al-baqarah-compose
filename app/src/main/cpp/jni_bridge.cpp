@@ -270,2367 +270,344 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
         }
     };
 
-    // -------- Style dispatch --------
-    // The seed selects from a hand-tuned set of ornament presets so the
-    // host can flip between them to find the look it likes. All styles
-    // share the triple band above and emit two end medallions plus a
-    // chain along the long edges, but the motifs differ — stars,
-    // petals, sunburst rays, or interlaced girih shapes.
-    const int NUM_STYLES = 35;
-    const int style = ((unsigned)seed) % (unsigned)NUM_STYLES;
-    LOGI("emitFrame: seed=%d style=%d", seed, style);
+    // -------- Mixed-mode compositional dispatch --------
+    // The triple chained-loop is the always-on structural backbone of
+    // the frame; the seed factorises into five independent ornament
+    // slots so every value produces a unique mix of motifs drawn from
+    // the earlier hand-tuned styles. Total combinations = 6·5·6·5·4.
+    const int NUM_STYLES = 3600;
+    unsigned int seedU = (unsigned)seed;
+    const int sideInteriorOpt = (int)(seedU % 6u); seedU /= 6u;
+    const int kissOpt         = (int)(seedU % 5u); seedU /= 5u;
+    const int flourishOpt     = (int)(seedU % 6u); seedU /= 6u;
+    const int tipOpt          = (int)(seedU % 5u); seedU /= 5u;
+    const int bandOpt         = (int)(seedU % 4u);
+    (void)NUM_STYLES;
+    LOGI("emitFrame: seed=%d (mix: side=%d kiss=%d flourish=%d tip=%d band=%d)",
+         seed, sideInteriorOpt, kissOpt, flourishOpt, tipOpt, bandOpt);
 
-    const float roseOutPx   = minSide * 0.36f;
-    const float roseInsetPx = bandPx + roseOutPx + minSide * 0.020f;
-    const float cU_left = roseInsetPx / dstW;
-    const float cU_right = 1.0f - cU_left;
-    const float chainMarginU = (roseInsetPx + roseOutPx + minSide * 0.05f) / dstW;
-    const bool drawChain = chainMarginU < 0.45f;
+    // ---- Triple-loop backbone ----
+    // Middle oval wide enough to clear the centred surah-title plate;
+    // two circular side loops kiss it tangentially at u = 0.5 ±
+    // midHalfWU. Adjacent loop pairs share a 6-point kiss star.
+    const float midHalfWPx  = dstW * 0.28f;
+    const float midHalfHPx  = dstH * 0.40f;
+    const float sideHalfPx  = dstH * 0.30f;
+    const float thicknessPx = minSide * 0.022f;
 
-    if (style == 0) {
-        // -------- Style 0: layered star burst with petal halo --------
-        const float R1o = minSide * 0.36f, R1i = minSide * 0.22f;
-        const float R2o = minSide * 0.21f, R2i = minSide * 0.14f;
-        const float R3o = minSide * 0.13f, R3i = minSide * 0.070f;
-        const float R4o = minSide * 0.065f, R4i = minSide * 0.038f;
-        const float R5o = minSide * 0.034f, R5i = minSide * 0.014f;
-        const float petalLenPx   = minSide * 0.45f;
-        const float petalHalfWPx = minSide * 0.040f;
-        auto medallion = [&](float c) {
-            for (int p = 0; p < 16; ++p) {
-                const float ang = (float)p * 2.0f * PI / 16.0f;
-                petal(c, 0.5f, ang,
-                      petalLenPx / dstW, petalLenPx / dstH,
-                      petalHalfWPx / dstW, petalHalfWPx / dstH, false);
+    auto ovalLoop = [&](float cU, float halfWPx, float halfHPx, float thPx) {
+        const int SEG = 96;
+        float prevUO = 0, prevVO = 0, prevUI = 0, prevVI = 0;
+        for (int i = 0; i <= SEG; ++i) {
+            const float t = (float)i * 2.0f * 3.14159265f / (float)SEG;
+            const float xC = halfWPx * cosf(t);
+            const float yC = halfHPx * sinf(t);
+            const float tx = -halfWPx * sinf(t);
+            const float ty =  halfHPx * cosf(t);
+            const float tlen = std::max(1e-6f, sqrtf(tx*tx + ty*ty));
+            const float perpX = -ty / tlen;
+            const float perpY =  tx / tlen;
+            const float uO = cU + (xC + perpX * thPx) / dstW;
+            const float vO = 0.5f + (yC + perpY * thPx) / dstH;
+            const float uI = cU + (xC - perpX * thPx) / dstW;
+            const float vI = 0.5f + (yC - perpY * thPx) / dstH;
+            if (i > 0) {
+                line(prevUO, prevVO, uO, vO);
+                line(uI, vI, prevUI, prevVI);
             }
-            polystar(c, 0.5f, R1o/dstW, R1o/dstH, R1i/dstW, R1i/dstH, 16, 0.0f,      false);
-            polystar(c, 0.5f, R2o/dstW, R2o/dstH, R2i/dstW, R2i/dstH, 12, PI/24.0f, true);
-            polystar(c, 0.5f, R3o/dstW, R3o/dstH, R3i/dstW, R3i/dstH,  8, PI/16.0f, false);
-            polystar(c, 0.5f, R4o/dstW, R4o/dstH, R4i/dstW, R4i/dstH,  6, 0.0f,      true);
-            polystar(c, 0.5f, R5o/dstW, R5o/dstH, R5i/dstW, R5i/dstH,  4, PI/8.0f,  false);
-        };
-        medallion(cU_left);
-        medallion(cU_right);
-        if (drawChain) {
-            const float chainOutPx = minSide * 0.050f;
-            const float chainInPx  = minSide * 0.022f;
-            const float aVtop = (bandPx + chainOutPx + minSide * 0.015f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const float petLenU = (chainOutPx * 0.9f) / dstW;
-            const float petLenV = (chainOutPx * 0.9f) / dstH;
-            const float petHWU  = (chainOutPx * 0.18f) / dstW;
-            const float petHWV  = (chainOutPx * 0.18f) / dstH;
-            const int N = 7;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                if ((k & 1) == 0) {
-                    polystar(uPos, aVtop, chainOutPx/dstW, chainOutPx/dstH,
-                             chainInPx/dstW, chainInPx/dstH, 8, 0.0f, false);
-                    polystar(uPos, aVbot, chainOutPx/dstW, chainOutPx/dstH,
-                             chainInPx/dstW, chainInPx/dstH, 8, 0.0f, false);
-                } else {
-                    petal(uPos, aVtop, -PI*0.5f, petLenU, petLenV, petHWU, petHWV, false);
-                    petal(uPos, aVtop,  PI*0.5f, petLenU, petLenV, petHWU, petHWV, false);
-                    petal(uPos, aVbot, -PI*0.5f, petLenU, petLenV, petHWU, petHWV, false);
-                    petal(uPos, aVbot,  PI*0.5f, petLenU, petLenV, petHWU, petHWV, false);
-                }
-            }
+            prevUO = uO; prevVO = vO;
+            prevUI = uI; prevVI = vI;
         }
-    } else if (style == 1) {
-        // -------- Style 1: pure floral rosette (nested petal rings) --------
-        auto floral = [&](float c) {
-            // Outer 16 long thin petals
-            const float L1 = minSide * 0.42f, W1 = minSide * 0.030f;
-            for (int p = 0; p < 16; ++p) {
-                const float ang = (float)p * 2.0f * PI / 16.0f;
-                petal(c, 0.5f, ang, L1/dstW, L1/dstH, W1/dstW, W1/dstH, false);
-            }
-            // Middle 8 fat petals, rotated 22.5° (between outer petals)
-            const float L2 = minSide * 0.26f, W2 = minSide * 0.060f;
-            for (int p = 0; p < 8; ++p) {
-                const float ang = PI/8.0f + (float)p * 2.0f * PI / 8.0f;
-                petal(c, 0.5f, ang, L2/dstW, L2/dstH, W2/dstW, W2/dstH, false);
-            }
-            // Inner 6 small fat petals
-            const float L3 = minSide * 0.14f, W3 = minSide * 0.048f;
+    };
+
+    ovalLoop(0.50f, midHalfWPx, midHalfHPx, thicknessPx);
+    const float sideOffsetU = (midHalfWPx + sideHalfPx) / dstW;
+    const float sideCLU = 0.50f - sideOffsetU;
+    const float sideCRU = 0.50f + sideOffsetU;
+    ovalLoop(sideCLU, sideHalfPx, sideHalfPx, thicknessPx * 0.9f);
+    ovalLoop(sideCRU, sideHalfPx, sideHalfPx, thicknessPx * 0.9f);
+
+    // ---- Slot 1: side-loop interior ornament ----
+    auto drawSideInterior = [&](float cU, int opt) {
+        const float r = sideHalfPx;
+        if (opt == 0) {
+            // empty — the loop stands on its own
+        } else if (opt == 1) {
+            // 8-pointed star
+            polystar(cU, 0.5f,
+                     (r*0.55f)/dstW, (r*0.55f)/dstH,
+                     (r*0.28f)/dstW, (r*0.28f)/dstH,
+                     8, 0.0f, false);
+        } else if (opt == 2) {
+            // 6-petal floret
+            const float L = r * 0.55f, W = r * 0.18f;
             for (int p = 0; p < 6; ++p) {
                 const float ang = (float)p * 2.0f * PI / 6.0f;
-                petal(c, 0.5f, ang, L3/dstW, L3/dstH, W3/dstW, W3/dstH, false);
+                petal(cU, 0.5f, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
             }
-            // Center hole + tiny pip
-            polystar(c, 0.5f, (minSide*0.045f)/dstW, (minSide*0.045f)/dstH,
-                     (minSide*0.040f)/dstW, (minSide*0.040f)/dstH, 12, 0.0f, true);
-            polystar(c, 0.5f, (minSide*0.020f)/dstW, (minSide*0.020f)/dstH,
-                     (minSide*0.016f)/dstW, (minSide*0.016f)/dstH, 8, 0.0f, false);
-        };
-        floral(cU_left);
-        floral(cU_right);
-        if (drawChain) {
-            // Chain: 4-petal flowers (cross pattern)
-            const float L = minSide * 0.045f, W = minSide * 0.014f;
-            const float aVtop = (bandPx + L + minSide * 0.010f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 11;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                for (int q = 0; q < 4; ++q) {
-                    const float ang = (float)q * PI * 0.5f;
-                    petal(uPos, aVtop, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                    petal(uPos, aVbot, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                }
+        } else if (opt == 3) {
+            // Concentric polygon rings
+            polystar(cU, 0.5f,
+                     (r*0.62f)/dstW, (r*0.62f)/dstH,
+                     (r*0.50f)/dstW, (r*0.50f)/dstH,
+                     20, 0.0f, false);
+            polystar(cU, 0.5f,
+                     (r*0.34f)/dstW, (r*0.34f)/dstH,
+                     (r*0.20f)/dstW, (r*0.20f)/dstH,
+                     12, 0.0f, true);
+        } else if (opt == 4) {
+            // Mini peony — two petal rings + centre pip
+            const float L1 = r*0.58f, W1 = r*0.20f;
+            for (int p = 0; p < 10; ++p) {
+                const float ang = (float)p * 2.0f * PI / 10.0f;
+                petal(cU, 0.5f, ang, L1/dstW, L1/dstH, W1/dstW, W1/dstH, false);
             }
-        }
-    } else if (style == 2) {
-        // -------- Style 2: sunburst rays + inner flower --------
-        auto sunburst = [&](float c) {
-            // 24 thin long radial spikes — outer "polystar" with very small inner radius
-            polystar(c, 0.5f,
-                     (minSide*0.43f)/dstW, (minSide*0.43f)/dstH,
-                     (minSide*0.060f)/dstW, (minSide*0.060f)/dstH,
-                     24, 0.0f, false);
-            // Ring cutout (polygon hole) at ~0.16
-            polystar(c, 0.5f,
-                     (minSide*0.16f)/dstW, (minSide*0.16f)/dstH,
-                     (minSide*0.15f)/dstW, (minSide*0.15f)/dstH,
-                     20, 0.0f, true);
-            // 8-petal inner flower
-            const float L = minSide * 0.13f, W = minSide * 0.032f;
-            for (int p = 0; p < 8; ++p) {
-                const float ang = (float)p * 2.0f * PI / 8.0f;
-                petal(c, 0.5f, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
+            const float L2 = r*0.32f, W2 = r*0.16f;
+            for (int p = 0; p < 7; ++p) {
+                const float ang = (PI/7.0f) + (float)p * 2.0f * PI / 7.0f;
+                petal(cU, 0.5f, ang, L2/dstW, L2/dstH, W2/dstW, W2/dstH, false);
             }
-            // Center small star
-            polystar(c, 0.5f,
-                     (minSide*0.035f)/dstW, (minSide*0.035f)/dstH,
-                     (minSide*0.015f)/dstW, (minSide*0.015f)/dstH,
+            polystar(cU, 0.5f,
+                     (r*0.13f)/dstW, (r*0.13f)/dstH,
+                     (r*0.07f)/dstW, (r*0.07f)/dstH,
                      6, 0.0f, false);
-        };
-        sunburst(cU_left);
-        sunburst(cU_right);
-        if (drawChain) {
-            // Chain: small filled circles (polygon w/ matched radii)
-            const float R = minSide * 0.026f;
-            const float aVtop = (bandPx + R + minSide * 0.018f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 11;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                polystar(uPos, aVtop, R/dstW, R/dstH,
-                         R*0.85f/dstW, R*0.85f/dstH, 12, 0.0f, false);
-                polystar(uPos, aVbot, R/dstW, R/dstH,
-                         R*0.85f/dstW, R*0.85f/dstH, 12, 0.0f, false);
-            }
-        }
-    } else if (style == 3) {
-        // -------- Style 3: girih (3 overlapping rotated 8-point stars) --------
-        auto girih = [&](float c) {
-            // 3 overlapping 8-point stars, rotated 15° each = 24-rayed look
-            for (int r = 0; r < 3; ++r) {
-                const float phase = (float)r * PI / 12.0f;
-                polystar(c, 0.5f,
-                         (minSide*0.36f)/dstW, (minSide*0.36f)/dstH,
-                         (minSide*0.20f)/dstW, (minSide*0.20f)/dstH,
-                         8, phase, false);
-            }
-            // Hexagonal hole at radius ~0.13
-            polystar(c, 0.5f,
-                     (minSide*0.14f)/dstW, (minSide*0.14f)/dstH,
-                     (minSide*0.12f)/dstW, (minSide*0.12f)/dstH,
-                     6, 0.0f, true);
-            // Inner 12-point star
-            polystar(c, 0.5f,
-                     (minSide*0.10f)/dstW, (minSide*0.10f)/dstH,
-                     (minSide*0.045f)/dstW, (minSide*0.045f)/dstH,
-                     12, 0.0f, false);
-            // Tiny center hole + pip
-            polystar(c, 0.5f,
-                     (minSide*0.030f)/dstW, (minSide*0.030f)/dstH,
-                     (minSide*0.022f)/dstW, (minSide*0.022f)/dstH,
-                     6, PI/6.0f, true);
-        };
-        girih(cU_left);
-        girih(cU_right);
-        if (drawChain) {
-            // Chain: alternating 6-point stars and small diamonds
-            const float R = minSide * 0.038f;
-            const float aVtop = (bandPx + R + minSide * 0.012f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 9;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                const bool isStar = (k & 1) == 0;
-                const int pts = isStar ? 6 : 4;
-                const float ph = isStar ? 0.0f : PI / 4.0f;
-                polystar(uPos, aVtop, R/dstW, R/dstH,
-                         R*0.4f/dstW, R*0.4f/dstH, pts, ph, false);
-                polystar(uPos, aVbot, R/dstW, R/dstH,
-                         R*0.4f/dstW, R*0.4f/dstH, pts, ph, false);
-            }
-        }
-    } else if (style == 4) {
-        // -------- Style 4: Lotus — overlapping wide curved petals --------
-        // Wide fat petals are drawn at 3 ring sizes with rotation offsets
-        // so the outline reads like overlapping lotus petals rather than a
-        // pure star.
-        auto lotus = [&](float c) {
-            // Outer ring — 8 very wide petals
-            const float L1 = minSide * 0.40f, W1 = minSide * 0.085f;
-            for (int p = 0; p < 8; ++p) {
-                const float ang = (float)p * 2.0f * PI / 8.0f;
-                petal(c, 0.5f, ang, L1/dstW, L1/dstH, W1/dstW, W1/dstH, false);
-            }
-            // Middle ring — 8 petals rotated 22.5°, slightly shorter
-            const float L2 = minSide * 0.30f, W2 = minSide * 0.070f;
-            for (int p = 0; p < 8; ++p) {
-                const float ang = PI / 8.0f + (float)p * 2.0f * PI / 8.0f;
-                petal(c, 0.5f, ang, L2/dstW, L2/dstH, W2/dstW, W2/dstH, false);
-            }
-            // Inner ring — 6 small fat petals
-            const float L3 = minSide * 0.15f, W3 = minSide * 0.055f;
+        } else { // opt == 5
+            // 6-point star + petal halo
+            polystar(cU, 0.5f,
+                     (r*0.38f)/dstW, (r*0.38f)/dstH,
+                     (r*0.18f)/dstW, (r*0.18f)/dstH,
+                     6, 0.0f, false);
+            const float L = r * 0.58f, W = r * 0.09f;
             for (int p = 0; p < 6; ++p) {
-                const float ang = (float)p * 2.0f * PI / 6.0f;
-                petal(c, 0.5f, ang, L3/dstW, L3/dstH, W3/dstW, W3/dstH, false);
-            }
-            // Hole at the center, then a tiny pip
-            polystar(c, 0.5f, (minSide*0.038f)/dstW, (minSide*0.038f)/dstH,
-                     (minSide*0.034f)/dstW, (minSide*0.034f)/dstH, 16, 0.0f, true);
-            polystar(c, 0.5f, (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
-                     (minSide*0.014f)/dstW, (minSide*0.014f)/dstH, 8, 0.0f, false);
-        };
-        lotus(cU_left);
-        lotus(cU_right);
-        if (drawChain) {
-            // Chain: tiny lotus petal pairs (vertical + horizontal)
-            const float L = minSide * 0.040f, W = minSide * 0.022f;
-            const float aVtop = (bandPx + L + minSide * 0.010f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 11;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                for (int q = 0; q < 4; ++q) {
-                    const float ang = (float)q * PI * 0.5f + PI * 0.25f;
-                    petal(uPos, aVtop, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                    petal(uPos, aVbot, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                }
+                const float ang = (PI/6.0f) + (float)p * 2.0f * PI / 6.0f;
+                petal(cU, 0.5f, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
             }
         }
-    } else if (style == 5) {
-        // -------- Style 5: Spiral mandala — 6 curling arms from center --------
-        // Each arm is a chain of three quadratic Béziers following a
-        // logarithmic-ish spiral, with a mirrored return curve to close
-        // the arm into a filled shape.
-        auto spiralArm = [&](float c, float baseAngle, float maxRadiusPx,
-                              float startWidthPx, float endWidthPx) {
-            // Sample 4 points along the spiral curve. The arm tapers — at
-            // r=0 it's wide (startWidthPx), at r=max it's narrow (endWidthPx).
-            const int N = 4;
-            float lx[N + 1], ly[N + 1];  // left edge
-            float rx[N + 1], ry[N + 1];  // right edge
-            float midx[N + 1], midy[N + 1];
-            for (int i = 0; i <= N; ++i) {
-                const float t = (float)i / (float)N;
-                const float r = maxRadiusPx * t;
-                // Spiral: angle grows with radius. ~135° curl over the arm length.
-                const float ang = baseAngle + t * 2.4f;
-                const float w = startWidthPx + (endWidthPx - startWidthPx) * t;
-                const float ux = cosf(ang), uy = sinf(ang);
-                const float px = -uy, py = ux;
-                const float mx = (r * ux) / dstW;
-                const float my = (r * uy) / dstH;
-                midx[i] = c + mx;
-                midy[i] = 0.5f + my;
-                lx[i] = c + mx + (px * w) / dstW;
-                ly[i] = 0.5f + my + (py * w) / dstH;
-                rx[i] = c + mx - (px * w) / dstW;
-                ry[i] = 0.5f + my - (py * w) / dstH;
-            }
-            // Draw quadratic Béziers connecting consecutive midpoints,
-            // with control points sampled at offsets to give curvature.
-            // Outgoing along left edge: l0 -> l1 -> ... -> lN
-            // Then around the tip back along right edge.
-            for (int i = 0; i < N; ++i) {
-                // Control point = midpoint plus slight outward shift
-                const float ctrlX = (lx[i] + lx[i + 1]) * 0.5f;
-                const float ctrlY = (ly[i] + ly[i + 1]) * 0.5f;
-                curve(lx[i], ly[i], ctrlX, ctrlY, lx[i + 1], ly[i + 1]);
-            }
-            // Tip cap: curve from lN to rN via the midpoint at i=N
-            curve(lx[N], ly[N], midx[N], midy[N], rx[N], ry[N]);
-            for (int i = N; i > 0; --i) {
-                const float ctrlX = (rx[i] + rx[i - 1]) * 0.5f;
-                const float ctrlY = (ry[i] + ry[i - 1]) * 0.5f;
-                curve(rx[i], ry[i], ctrlX, ctrlY, rx[i - 1], ry[i - 1]);
-            }
-            // Base cap: curve from r0 back to l0 via center
-            curve(rx[0], ry[0], midx[0], midy[0], lx[0], ly[0]);
-        };
-        auto spiral = [&](float c) {
-            const int ARMS = 6;
-            const float maxR = minSide * 0.36f;
-            const float startW = minSide * 0.022f;
-            const float endW   = minSide * 0.012f;
-            for (int a = 0; a < ARMS; ++a) {
-                const float baseAng = (float)a * 2.0f * PI / (float)ARMS;
-                spiralArm(c, baseAng, maxR, startW, endW);
-            }
-            // Central disc + pip
-            polystar(c, 0.5f, (minSide*0.060f)/dstW, (minSide*0.060f)/dstH,
-                     (minSide*0.055f)/dstW, (minSide*0.055f)/dstH, 16, 0.0f, false);
-            polystar(c, 0.5f, (minSide*0.030f)/dstW, (minSide*0.030f)/dstH,
-                     (minSide*0.026f)/dstW, (minSide*0.026f)/dstH, 12, 0.0f, true);
-            polystar(c, 0.5f, (minSide*0.012f)/dstW, (minSide*0.012f)/dstH,
-                     (minSide*0.008f)/dstW, (minSide*0.008f)/dstH, 6, 0.0f, false);
-        };
-        spiral(cU_left);
-        spiral(cU_right);
-        if (drawChain) {
-            // Chain: small comma/curl marks alternating direction
-            const float armR = minSide * 0.040f;
-            const float aVtop = (bandPx + armR + minSide * 0.015f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 9;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                const float baseAng = (k & 1) ? PI * 0.25f : -PI * 0.25f;
-                spiralArm(uPos - aVtop * 0.0f, baseAng, armR,
-                          minSide * 0.012f, minSide * 0.006f);
-                spiralArm(uPos, baseAng + PI, armR,
-                          minSide * 0.012f, minSide * 0.006f);
-                // Mirror for bottom edge — shift via a fake center by
-                // re-using spiralArm at the bottom V band.
-                // Hack: call spiralArm twice for bottom positioning.
-                // Easier: draw a small dot since spirals get cluttered.
-                polystar(uPos, aVbot, armR*0.5f/dstW, armR*0.5f/dstH,
-                         armR*0.4f/dstW, armR*0.4f/dstH, 8, 0.0f, false);
-            }
-        }
-    } else if (style == 6) {
-        // -------- Style 6: S-scroll cartouche — 4 paired S-curves --------
-        // An "S" shape made of two quadratic curves; placed around the
-        // medallion center to form a baroque cartouche feel.
-        auto sScroll = [&](float c, float baseAngle, float reach, float thickness) {
-            // Define 4 points: p0 (start), p1 (first bend), p2 (mid), p3 (end)
-            const float dirU = cosf(baseAngle), dirV = sinf(baseAngle);
-            const float perpU = -sinf(baseAngle), perpV = cosf(baseAngle);
-            const float l = reach;
-            // Two ends of the S
-            const float p0u = c + (dirU * 0 - perpU * thickness * 0.5f) / dstW;
-            const float p0v = 0.5f + (dirV * 0 - perpV * thickness * 0.5f) / dstH;
-            const float pEu = c + (dirU * l + perpU * thickness * 0.5f) / dstW;
-            const float pEv = 0.5f + (dirV * l + perpV * thickness * 0.5f) / dstH;
-            // Control points: bulge OPPOSITE sides for the two halves of the S
-            const float qLu = c + (dirU * l * 0.25f + perpU * l * 0.6f) / dstW;
-            const float qLv = 0.5f + (dirV * l * 0.25f + perpV * l * 0.6f) / dstH;
-            const float qRu = c + (dirU * l * 0.75f - perpU * l * 0.6f) / dstW;
-            const float qRv = 0.5f + (dirV * l * 0.75f - perpV * l * 0.6f) / dstH;
-            // Lower edge (outgoing) and upper edge (return) make a closed strip
-            const float w = thickness * 0.5f;
-            const float p0uL = c + (dirU * 0 - perpU * w) / dstW;
-            const float p0vL = 0.5f + (dirV * 0 - perpV * w) / dstH;
-            const float p0uR = c + (dirU * 0 + perpU * w) / dstW;
-            const float p0vR = 0.5f + (dirV * 0 + perpV * w) / dstH;
-            const float pEuL = c + (dirU * l - perpU * w) / dstW;
-            const float pEvL = 0.5f + (dirV * l - perpV * w) / dstH;
-            const float pEuR = c + (dirU * l + perpU * w) / dstW;
-            const float pEvR = 0.5f + (dirV * l + perpV * w) / dstH;
-            // Two-curve S as a closed thin strip: bottom curve out, top curve back
-            curve(p0uL, p0vL, qLu, qLv, pEuL, pEvL);
-            curve(pEuL, pEvL, qRu, qRv, pEuR, pEvR);  // tip turn
-            curve(pEuR, pEvR, qRu, qRv, p0uR, p0vR);  // wait — closing path
-            curve(p0uR, p0vR, qLu, qLv, p0uL, p0vL);
-            // Suppress unused vars warning
-            (void)p0u; (void)p0v; (void)pEu; (void)pEv;
-        };
-        auto cartouche = [&](float c) {
-            // 4 S-scrolls arranged in a plus pattern, each curling outward
-            const float reach = minSide * 0.32f;
-            const float thick = minSide * 0.050f;
+    };
+    drawSideInterior(sideCLU, sideInteriorOpt);
+    drawSideInterior(sideCRU, sideInteriorOpt);
+
+    // ---- Slot 2: kiss-point ornament (tangent join of middle & side loop) ----
+    const float kissLU = 0.50f - midHalfWPx / dstW;
+    const float kissRU = 0.50f + midHalfWPx / dstW;
+    auto drawKiss = [&](float u, int opt) {
+        const float r = minSide * 0.030f;
+        if (opt == 0) {
+            polystar(u, 0.5f, r/dstW, r/dstH,
+                     (r*0.55f)/dstW, (r*0.55f)/dstH, 6, 0.0f, false);
+        } else if (opt == 1) {
+            polystar(u, 0.5f, r/dstW, r/dstH,
+                     (r*0.30f)/dstW, (r*0.30f)/dstH, 4, PI/4.0f, false);
+        } else if (opt == 2) {
+            const float L = r * 0.85f, W = r * 0.25f;
             for (int q = 0; q < 4; ++q) {
                 const float ang = (float)q * PI * 0.5f;
-                sScroll(c, ang, reach, thick);
+                petal(u, 0.5f, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
             }
-            // 4 smaller S-scrolls at 45° angles
-            for (int q = 0; q < 4; ++q) {
-                const float ang = (float)q * PI * 0.5f + PI * 0.25f;
-                sScroll(c, ang, reach * 0.6f, thick * 0.7f);
-            }
-            // Center: layered star
-            polystar(c, 0.5f, (minSide*0.080f)/dstW, (minSide*0.080f)/dstH,
-                     (minSide*0.040f)/dstW, (minSide*0.040f)/dstH, 8, 0.0f, false);
-            polystar(c, 0.5f, (minSide*0.035f)/dstW, (minSide*0.035f)/dstH,
-                     (minSide*0.028f)/dstW, (minSide*0.028f)/dstH, 12, 0.0f, true);
-            polystar(c, 0.5f, (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
-                     (minSide*0.012f)/dstW, (minSide*0.012f)/dstH, 6, 0.0f, false);
-        };
-        cartouche(cU_left);
-        cartouche(cU_right);
-        if (drawChain) {
-            // Chain: alternating small S-scroll and dot
-            const float reach = minSide * 0.045f;
-            const float thick = minSide * 0.014f;
-            const float aVtop = (bandPx + thick + minSide * 0.020f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 9;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                if ((k & 1) == 0) {
-                    sScroll(uPos, 0.0f, reach, thick);
-                    sScroll(uPos, PI, reach, thick);
-                } else {
-                    polystar(uPos, aVtop,
-                             (minSide*0.020f)/dstW, (minSide*0.020f)/dstH,
-                             (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
-                             8, 0.0f, false);
-                    polystar(uPos, aVbot,
-                             (minSide*0.020f)/dstW, (minSide*0.020f)/dstH,
-                             (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
-                             8, 0.0f, false);
-                }
-            }
+        } else if (opt == 3) {
+            polystar(u, 0.5f, r/dstW, r/dstH,
+                     (r*0.85f)/dstW, (r*0.85f)/dstH, 16, 0.0f, false);
+            polystar(u, 0.5f, (r*0.55f)/dstW, (r*0.55f)/dstH,
+                     (r*0.40f)/dstW, (r*0.40f)/dstH, 12, 0.0f, true);
+        } else { // opt == 4
+            polystar(u, 0.5f, r/dstW, r/dstH,
+                     (r*0.42f)/dstW, (r*0.42f)/dstH, 8, 0.0f, false);
         }
-    } else if (style == 7) {
-        // -------- Style 7: Fractal flower — petals with sub-flowers at tips --------
-        auto subFlower = [&](float cU_, float cV_, float petalLenPx, float petalWPx, int n) {
-            for (int p = 0; p < n; ++p) {
-                const float ang = (float)p * 2.0f * PI / (float)n;
-                petal(cU_, cV_, ang,
-                      petalLenPx/dstW, petalLenPx/dstH,
-                      petalWPx/dstW, petalWPx/dstH, false);
-            }
-        };
-        auto fractalFlower = [&](float c) {
-            // 8 main petals
-            const float L1 = minSide * 0.36f, W1 = minSide * 0.040f;
-            for (int p = 0; p < 8; ++p) {
-                const float ang = (float)p * 2.0f * PI / 8.0f;
-                petal(c, 0.5f, ang, L1/dstW, L1/dstH, W1/dstW, W1/dstH, false);
-                // Sub-flower at each tip
-                const float tipU = c + cosf(ang) * (L1 * 0.92f) / dstW;
-                const float tipV = 0.5f + sinf(ang) * (L1 * 0.92f) / dstH;
-                subFlower(tipU, tipV, minSide * 0.040f, minSide * 0.014f, 5);
-            }
-            // 6 secondary petals filling the gaps, rotated 22.5° (between main petals)
-            const float L2 = minSide * 0.20f, W2 = minSide * 0.050f;
-            for (int p = 0; p < 8; ++p) {
-                const float ang = PI / 8.0f + (float)p * 2.0f * PI / 8.0f;
-                petal(c, 0.5f, ang, L2/dstW, L2/dstH, W2/dstW, W2/dstH, false);
-            }
-            // Center flower (4-petal)
-            subFlower(c, 0.5f, minSide * 0.060f, minSide * 0.022f, 4);
-            // Tiny pip
-            polystar(c, 0.5f, (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
-                     (minSide*0.010f)/dstW, (minSide*0.010f)/dstH, 6, 0.0f, false);
-        };
-        fractalFlower(cU_left);
-        fractalFlower(cU_right);
-        if (drawChain) {
-            // Chain: small 5-petal fractal-style flowers
-            const float aVtop = (bandPx + minSide * 0.040f + minSide * 0.012f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 11;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                subFlower(uPos, aVtop, minSide * 0.030f, minSide * 0.010f, 5);
-                subFlower(uPos, aVbot, minSide * 0.030f, minSide * 0.010f, 5);
-            }
-        }
-    } else if (style == 8) {
-        // -------- Style 8: Cardioid heart ring --------
-        // A heart shape made of two mirrored Béziers: from base point up
-        // to apex via outward lobe controls. Arranged radially in a ring
-        // around the medallion center.
-        auto heart = [&](float cU_, float cV_, float angle, float sizePx) {
-            const float dirU = cosf(angle), dirV = sinf(angle);
-            const float perpU = -sinf(angle), perpV = cosf(angle);
-            // Heart oriented so tip points OUTWARD from center.
-            const float lenU = sizePx / dstW, lenV = sizePx / dstH;
-            const float baseU = cU_, baseV = cV_;  // not used, just inner anchor
-            (void)baseU; (void)baseV;
-            // The heart has TIP at distance `sizePx` outward; the lobes are
-            // at the inner side. Two Bezier curves trace base→tip→base.
-            const float tipU = cU_ + dirU * lenU;
-            const float tipV = cV_ + dirV * lenV;
-            // Mid offset point on each side
-            const float bulgeU = sizePx * 0.55f;
-            const float bulgeV = sizePx * 0.55f;
-            const float lobeAU = cU_ + (-dirU * lenU * 0.25f + perpU * bulgeU) / dstW;
-            const float lobeAV = cV_ + (-dirV * lenV * 0.25f + perpV * bulgeV) / dstH;
-            const float lobeBU = cU_ + (-dirU * lenU * 0.25f - perpU * bulgeU) / dstW;
-            const float lobeBV = cV_ + (-dirV * lenV * 0.25f - perpV * bulgeV) / dstH;
-            // Inner pinch point — the cusp of the heart, slightly inside center
-            const float pinchU = cU_ - (dirU * sizePx * 0.05f) / dstW;
-            const float pinchV = cV_ - (dirV * sizePx * 0.05f) / dstH;
-            curve(pinchU, pinchV, lobeAU, lobeAV, tipU, tipV);
-            curve(tipU,   tipV,   lobeBU, lobeBV, pinchU, pinchV);
-        };
-        auto hearts = [&](float c) {
-            const int N = 10;
-            const float sz1 = minSide * 0.32f;
-            for (int p = 0; p < N; ++p) {
-                const float ang = (float)p * 2.0f * PI / (float)N;
-                heart(c, 0.5f, ang, sz1);
-            }
-            // Inner smaller ring of 8 hearts rotated half-step
-            const int N2 = 8;
-            const float sz2 = minSide * 0.15f;
-            for (int p = 0; p < N2; ++p) {
-                const float ang = PI / (float)N2 + (float)p * 2.0f * PI / (float)N2;
-                heart(c, 0.5f, ang, sz2);
-            }
-            // Center small flower
-            for (int p = 0; p < 6; ++p) {
-                const float ang = (float)p * 2.0f * PI / 6.0f;
-                petal(c, 0.5f, ang, (minSide*0.060f)/dstW, (minSide*0.060f)/dstH,
-                      (minSide*0.020f)/dstW, (minSide*0.020f)/dstH, false);
-            }
-            polystar(c, 0.5f, (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
-                     (minSide*0.010f)/dstW, (minSide*0.010f)/dstH, 6, 0.0f, false);
-        };
-        hearts(cU_left);
-        hearts(cU_right);
-        if (drawChain) {
-            const float aVtop = (bandPx + minSide * 0.045f + minSide * 0.008f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 9;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                // Heart pointing up at top edge, down at bottom edge
-                heart(uPos, aVtop, -PI * 0.5f, minSide * 0.040f);
-                heart(uPos, aVbot,  PI * 0.5f, minSide * 0.040f);
-            }
-        }
-    } else if (style == 9) {
-        // -------- Style 9: Vortex — sweeping curved arms --------
-        // Long pinwheel arms that taper from a thick base to a thin tip;
-        // similar to spiral but with deeper curl and chunkier base.
-        auto vortexArm = [&](float c, float baseAngle, float maxRadiusPx,
-                              float startWidthPx, float endWidthPx,
-                              float curl) {
-            const int N = 6;
-            float lx[N + 1], ly[N + 1];
-            float rx[N + 1], ry[N + 1];
-            float mx[N + 1], my[N + 1];
-            for (int i = 0; i <= N; ++i) {
-                const float t = (float)i / (float)N;
-                const float r = maxRadiusPx * t;
-                const float ang = baseAngle + t * curl;
-                const float w = startWidthPx + (endWidthPx - startWidthPx) * t;
-                const float ux = cosf(ang), uy = sinf(ang);
-                const float px = -uy, py = ux;
-                mx[i] = c + (r * ux) / dstW;
-                my[i] = 0.5f + (r * uy) / dstH;
-                lx[i] = mx[i] + (px * w) / dstW;
-                ly[i] = my[i] + (py * w) / dstH;
-                rx[i] = mx[i] - (px * w) / dstW;
-                ry[i] = my[i] - (py * w) / dstH;
-            }
-            for (int i = 0; i < N; ++i) {
-                curve(lx[i], ly[i],
-                      (lx[i] + lx[i + 1]) * 0.5f, (ly[i] + ly[i + 1]) * 0.5f,
-                      lx[i + 1], ly[i + 1]);
-            }
-            curve(lx[N], ly[N], mx[N], my[N], rx[N], ry[N]);
-            for (int i = N; i > 0; --i) {
-                curve(rx[i], ry[i],
-                      (rx[i] + rx[i - 1]) * 0.5f, (ry[i] + ry[i - 1]) * 0.5f,
-                      rx[i - 1], ry[i - 1]);
-            }
-            curve(rx[0], ry[0], mx[0], my[0], lx[0], ly[0]);
-        };
-        auto vortex = [&](float c) {
-            const int ARMS = 5;
-            for (int a = 0; a < ARMS; ++a) {
-                const float baseAng = (float)a * 2.0f * PI / (float)ARMS;
-                vortexArm(c, baseAng, minSide * 0.38f,
-                          minSide * 0.045f, minSide * 0.005f, 3.2f);
-            }
-            // Inner counter-rotating arms (smaller, opposite curl)
-            for (int a = 0; a < ARMS; ++a) {
-                const float baseAng = PI / 5.0f + (float)a * 2.0f * PI / (float)ARMS;
-                vortexArm(c, baseAng, minSide * 0.16f,
-                          minSide * 0.025f, minSide * 0.003f, -2.0f);
-            }
-            // Center pip + ring
-            polystar(c, 0.5f, (minSide*0.060f)/dstW, (minSide*0.060f)/dstH,
-                     (minSide*0.052f)/dstW, (minSide*0.052f)/dstH, 16, 0.0f, false);
-            polystar(c, 0.5f, (minSide*0.030f)/dstW, (minSide*0.030f)/dstH,
-                     (minSide*0.024f)/dstW, (minSide*0.024f)/dstH, 12, 0.0f, true);
-            polystar(c, 0.5f, (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
-                     (minSide*0.010f)/dstW, (minSide*0.010f)/dstH, 6, 0.0f, false);
-        };
-        vortex(cU_left);
-        vortex(cU_right);
-        if (drawChain) {
-            // Chain: small twin vortex arms forming wave-like motifs
-            const float aVtop = (bandPx + minSide * 0.040f + minSide * 0.012f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 9;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                // Place mini vortex arms; using a hack: re-center the
-                // "0.5f" by passing uPos as c (since vortexArm uses 0.5f
-                // hard-coded for the v-center). For chain we instead just
-                // draw small petal-pairs for simplicity.
-                petal(uPos, aVtop, -PI * 0.5f,
-                      (minSide*0.040f)/dstW, (minSide*0.040f)/dstH,
-                      (minSide*0.016f)/dstW, (minSide*0.016f)/dstH, false);
-                petal(uPos, aVtop,  PI * 0.5f,
-                      (minSide*0.040f)/dstW, (minSide*0.040f)/dstH,
-                      (minSide*0.016f)/dstW, (minSide*0.016f)/dstH, false);
-                petal(uPos, aVbot, -PI * 0.5f,
-                      (minSide*0.040f)/dstW, (minSide*0.040f)/dstH,
-                      (minSide*0.016f)/dstW, (minSide*0.016f)/dstH, false);
-                petal(uPos, aVbot,  PI * 0.5f,
-                      (minSide*0.040f)/dstW, (minSide*0.040f)/dstH,
-                      (minSide*0.016f)/dstW, (minSide*0.016f)/dstH, false);
-            }
-        }
-    } else if (style == 10) {
-        // -------- Style 10: Paisley — curled teardrop with hooked tail --------
-        // A paisley/buta motif: a body with a long curled tail. Modeled
-        // as a closed path of two quadratic Béziers: an outer "tail
-        // hook" curve and an inner return curve. Tip = curl, base = body.
-        auto paisley = [&](float cU_, float cV_, float angle, float sizePx) {
-            const float dirU = cosf(angle), dirV = sinf(angle);
-            const float perpU = -sinf(angle), perpV = cosf(angle);
-            // base of body — near center
-            const float bU = cU_, bV = cV_;
-            // outer body apex (fat part)
-            const float bodyR = sizePx * 0.55f;
-            const float bodyU = cU_ + (dirU * sizePx * 0.5f + perpU * bodyR) / dstW;
-            const float bodyV = cV_ + (dirV * sizePx * 0.5f + perpV * bodyR) / dstH;
-            // tip (curls back toward center)
-            const float tipU = cU_ + (dirU * sizePx - perpU * sizePx * 0.05f) / dstW;
-            const float tipV = cV_ + (dirV * sizePx - perpV * sizePx * 0.05f) / dstH;
-            // inner control near base
-            const float innerU = cU_ + (dirU * sizePx * 0.4f - perpU * sizePx * 0.15f) / dstW;
-            const float innerV = cV_ + (dirV * sizePx * 0.4f - perpV * sizePx * 0.15f) / dstH;
-            // outer curve from base → body → tip
-            curve(bU, bV, bodyU, bodyV, tipU, tipV);
-            // inner curve tip → inner → base (closes the path)
-            curve(tipU, tipV, innerU, innerV, bU, bV);
-        };
-        auto paisleyMandala = [&](float c) {
-            // Outer ring of 8 paisleys, all curling counter-clockwise
-            const float sz1 = minSide * 0.36f;
-            for (int p = 0; p < 8; ++p) {
-                const float ang = (float)p * 2.0f * PI / 8.0f;
-                paisley(c, 0.5f, ang, sz1);
-            }
-            // Inner ring of 6 smaller paisleys, opposite curl (rotate -PI/6 phase)
-            const float sz2 = minSide * 0.17f;
-            for (int p = 0; p < 6; ++p) {
-                const float ang = PI / 6.0f + (float)p * 2.0f * PI / 6.0f;
-                paisley(c, 0.5f, ang, sz2);
-            }
-            // Center small flower
-            for (int p = 0; p < 5; ++p) {
-                const float ang = (float)p * 2.0f * PI / 5.0f;
-                petal(c, 0.5f, ang,
-                      (minSide*0.040f)/dstW, (minSide*0.040f)/dstH,
-                      (minSide*0.015f)/dstW, (minSide*0.015f)/dstH, false);
-            }
-        };
-        paisleyMandala(cU_left);
-        paisleyMandala(cU_right);
-        if (drawChain) {
-            // Chain: small paisleys alternating direction
-            const float aVtop = (bandPx + minSide * 0.045f + minSide * 0.008f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 9;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                const float dir = (k & 1) ? 1.0f : -1.0f;
-                paisley(uPos, aVtop, dir * PI * 0.5f, minSide * 0.045f);
-                paisley(uPos, aVbot, dir * -PI * 0.5f, minSide * 0.045f);
-            }
-        }
-    } else if (style == 11) {
-        // -------- Style 11: Wave / ripple — concentric wavy rings --------
-        // Each ring is a polystar with many points and a small in/out
-        // radius oscillation — looks like a circular sine wave.
-        auto wavyRing = [&](float c, float radiusPx, float amplitudePx,
-                              int waves, float phase, bool reverse) {
-            polystar(c, 0.5f,
-                     (radiusPx + amplitudePx) / dstW,
-                     (radiusPx + amplitudePx) / dstH,
-                     (radiusPx - amplitudePx) / dstW,
-                     (radiusPx - amplitudePx) / dstH,
-                     waves, phase, reverse);
-        };
-        auto ripple = [&](float c) {
-            // 5 concentric wavy rings, alternating phase for a quilted look
-            wavyRing(c, minSide * 0.34f, minSide * 0.025f, 20, 0.0f,       false);
-            wavyRing(c, minSide * 0.30f, minSide * 0.020f, 18, PI / 18.0f, true);
-            wavyRing(c, minSide * 0.24f, minSide * 0.025f, 16, 0.0f,       false);
-            wavyRing(c, minSide * 0.18f, minSide * 0.020f, 14, PI / 14.0f, true);
-            wavyRing(c, minSide * 0.12f, minSide * 0.025f, 12, 0.0f,       false);
-            // Center 6-petal flower
-            for (int p = 0; p < 6; ++p) {
-                const float ang = (float)p * 2.0f * PI / 6.0f;
-                petal(c, 0.5f, ang,
-                      (minSide*0.055f)/dstW, (minSide*0.055f)/dstH,
-                      (minSide*0.022f)/dstW, (minSide*0.022f)/dstH, false);
-            }
-            polystar(c, 0.5f, (minSide*0.015f)/dstW, (minSide*0.015f)/dstH,
-                     (minSide*0.011f)/dstW, (minSide*0.011f)/dstH, 8, 0.0f, false);
-        };
-        ripple(cU_left);
-        ripple(cU_right);
-        if (drawChain) {
-            // Chain: small wavy circles (rings drawn as a thin band)
-            const float aVtop = (bandPx + minSide * 0.030f + minSide * 0.012f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 11;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                polystar(uPos, aVtop,
-                         (minSide*0.030f)/dstW, (minSide*0.030f)/dstH,
-                         (minSide*0.022f)/dstW, (minSide*0.022f)/dstH,
-                         10, 0.0f, false);
-                polystar(uPos, aVbot,
-                         (minSide*0.030f)/dstW, (minSide*0.030f)/dstH,
-                         (minSide*0.022f)/dstW, (minSide*0.022f)/dstH,
-                         10, 0.0f, false);
-            }
-        }
-    } else if (style == 12) {
-        // -------- Style 12: Sunflower — fibonacci spiral packing --------
-        // Many small petals/seeds placed on a golden-angle spiral. The
-        // golden angle is ~137.508° = pi * (3 - sqrt(5)).
-        const float goldenAngle = 2.39996323f;  // pi * (3 - sqrt 5)
-        auto sunflower = [&](float c) {
-            const int SEEDS = 80;
-            const float maxR = minSide * 0.38f;
-            for (int i = 0; i < SEEDS; ++i) {
-                const float t = (float)i / (float)(SEEDS - 1);
-                const float r = sqrtf(t) * maxR;
-                const float ang = (float)i * goldenAngle;
-                const float uPos = c + (r * cosf(ang)) / dstW;
-                const float vPos = 0.5f + (r * sinf(ang)) / dstH;
-                // Each seed: small oriented petal pointing outward
-                const float petL = minSide * 0.030f + r * 0.05f;
-                const float petW = minSide * 0.011f;
-                petal(uPos, vPos, ang,
-                      petL/dstW, petL/dstH, petW/dstW, petW/dstH, false);
-            }
-            // Center cap so the densely packed spirals join a clean disc
-            polystar(c, 0.5f,
-                     (minSide*0.055f)/dstW, (minSide*0.055f)/dstH,
-                     (minSide*0.050f)/dstW, (minSide*0.050f)/dstH,
-                     16, 0.0f, false);
-            polystar(c, 0.5f,
-                     (minSide*0.025f)/dstW, (minSide*0.025f)/dstH,
-                     (minSide*0.020f)/dstW, (minSide*0.020f)/dstH,
-                     12, 0.0f, true);
-        };
-        sunflower(cU_left);
-        sunflower(cU_right);
-        if (drawChain) {
-            // Chain: mini sunflower seeds (small petals on a tiny golden spiral)
-            const float aVtop = (bandPx + minSide * 0.035f + minSide * 0.012f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 9;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                for (int i = 0; i < 6; ++i) {
-                    const float r = sqrtf((float)i / 5.0f) * minSide * 0.030f;
-                    const float ang = (float)i * goldenAngle;
-                    const float sU = uPos + (r * cosf(ang)) / dstW;
-                    const float sVt = aVtop + (r * sinf(ang)) / dstH;
-                    const float sVb = aVbot + (r * sinf(ang)) / dstH;
-                    petal(sU, sVt, ang,
-                          (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
-                          (minSide*0.006f)/dstW, (minSide*0.006f)/dstH, false);
-                    petal(sU, sVb, ang,
-                          (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
-                          (minSide*0.006f)/dstW, (minSide*0.006f)/dstH, false);
-                }
-            }
-        }
-    } else if (style == 13) {
-        // -------- Style 13: Rose curve (rhodonea) --------
-        // r = R * |cos(k * theta)| traces a rose with 2k petals (for even
-        // k). Sampled densely and emitted as a polyline ring. Two nested
-        // roses with different k counts create a bouquet effect.
-        auto rose = [&](float cU, float cV, float R, int k, float phase,
-                        bool reverse) {
-            const int STEPS = 240;
-            float prevU = 0.0f, prevV = 0.0f;
-            for (int i = 0; i <= STEPS; ++i) {
-                const float t = (float)i / (float)STEPS;
-                const float theta = phase + t * 2.0f * PI * (reverse ? -1.0f : 1.0f);
-                const float r = R * fabsf(cosf((float)k * theta));
-                const float u = cU + (r * cosf(theta)) / dstW;
-                const float v = cV + (r * sinf(theta)) / dstH;
-                if (i > 0) line(prevU, prevV, u, v);
-                prevU = u; prevV = v;
-            }
-        };
-        auto roseGroup = [&](float c) {
-            // Outer rose (8 petals, k=4)
-            rose(c, 0.5f, minSide * 0.38f, 4, 0.0f, false);
-            // Middle rose (6 petals, k=3), rotated
-            rose(c, 0.5f, minSide * 0.24f, 3, PI / 6.0f, true);
-            // Inner rose (4 petals, k=2)
-            rose(c, 0.5f, minSide * 0.13f, 2, 0.0f, false);
-            // Center dot
-            polystar(c, 0.5f,
-                     (minSide*0.025f)/dstW, (minSide*0.025f)/dstH,
-                     (minSide*0.020f)/dstW, (minSide*0.020f)/dstH,
-                     12, 0.0f, true);
-        };
-        roseGroup(cU_left);
-        roseGroup(cU_right);
-        if (drawChain) {
-            // Chain: tiny 4-petal roses
-            const float aVtop = (bandPx + minSide * 0.035f + minSide * 0.012f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 7;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                rose(uPos, aVtop, minSide * 0.033f, 2, 0.0f, false);
-                rose(uPos, aVbot, minSide * 0.033f, 2, 0.0f, true);
-            }
-        }
-    } else if (style == 14) {
-        // -------- Style 14: Peacock feather fan --------
-        // Long curved feathers radiating outward, each ending in an "eye"
-        // (a small floral cluster). Reads like a peacock's tail when seen
-        // from the medallion centre.
-        auto peacock = [&](float c) {
-            const int RAYS = 12;
-            const float featherLen = minSide * 0.42f;
-            const float featherHalfW = minSide * 0.040f;
-            const float eyeR = minSide * 0.060f;
-            for (int i = 0; i < RAYS; ++i) {
-                const float ang = (float)i * 2.0f * PI / (float)RAYS;
-                // Main feather body (long thin petal)
-                petal(c, 0.5f, ang,
-                      featherLen / dstW, featherLen / dstH,
-                      featherHalfW / dstW, featherHalfW / dstH, false);
-                // Eye at the tip
-                const float tipU = c + cosf(ang) * (featherLen * 0.88f) / dstW;
-                const float tipV = 0.5f + sinf(ang) * (featherLen * 0.88f) / dstH;
-                polystar(tipU, tipV,
-                         eyeR / dstW, eyeR / dstH,
-                         (eyeR * 0.45f) / dstW, (eyeR * 0.45f) / dstH,
-                         8, ang, false);
-                polystar(tipU, tipV,
-                         (eyeR * 0.45f) / dstW, (eyeR * 0.45f) / dstH,
-                         (eyeR * 0.25f) / dstW, (eyeR * 0.25f) / dstH,
-                         6, ang + PI / 6.0f, true);
-                polystar(tipU, tipV,
-                         (eyeR * 0.20f) / dstW, (eyeR * 0.20f) / dstH,
-                         (eyeR * 0.10f) / dstW, (eyeR * 0.10f) / dstH,
-                         4, ang, false);
-            }
-            // Central rosette
-            polystar(c, 0.5f,
-                     (minSide * 0.10f) / dstW, (minSide * 0.10f) / dstH,
-                     (minSide * 0.060f) / dstW, (minSide * 0.060f) / dstH,
-                     12, 0.0f, false);
-            polystar(c, 0.5f,
-                     (minSide * 0.055f) / dstW, (minSide * 0.055f) / dstH,
-                     (minSide * 0.030f) / dstW, (minSide * 0.030f) / dstH,
-                     8, PI / 8.0f, true);
-            polystar(c, 0.5f,
-                     (minSide * 0.025f) / dstW, (minSide * 0.025f) / dstH,
-                     (minSide * 0.012f) / dstW, (minSide * 0.012f) / dstH,
-                     6, 0.0f, false);
-        };
-        peacock(cU_left);
-        peacock(cU_right);
-        if (drawChain) {
-            const float aVtop = (bandPx + minSide * 0.030f + minSide * 0.012f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 9;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                // Mini 6-ray feather burst
-                for (int r = 0; r < 6; ++r) {
-                    const float ang = (float)r * 2.0f * PI / 6.0f;
-                    petal(uPos, aVtop, ang,
-                          (minSide*0.024f)/dstW, (minSide*0.024f)/dstH,
-                          (minSide*0.006f)/dstW, (minSide*0.006f)/dstH, false);
-                    petal(uPos, aVbot, ang,
-                          (minSide*0.024f)/dstW, (minSide*0.024f)/dstH,
-                          (minSide*0.006f)/dstW, (minSide*0.006f)/dstH, false);
-                }
-            }
-        }
-    } else if (style == 15) {
-        // -------- Style 15: Celtic interlace knot --------
-        // Three offset rings woven together via alternating in/out
-        // winding rules — gives a chained-loop / trefoil ornament feel.
-        // Each "ring" is approximated by a wavy polystar with many points.
-        auto interlace = [&](float c) {
-            const int RING_PTS = 60;
-            // Ring 1 (large, even ring at 0°)
-            polystar(c, 0.5f,
-                     (minSide * 0.36f) / dstW, (minSide * 0.36f) / dstH,
-                     (minSide * 0.31f) / dstW, (minSide * 0.31f) / dstH,
-                     RING_PTS, 0.0f, false);
-            polystar(c, 0.5f,
-                     (minSide * 0.34f) / dstW, (minSide * 0.34f) / dstH,
-                     (minSide * 0.30f) / dstW, (minSide * 0.30f) / dstH,
-                     RING_PTS, PI / (float)RING_PTS, true);
-            // Three trefoil loops offset around the centre, each a
-            // smaller wavy ring.
-            for (int t = 0; t < 3; ++t) {
-                const float ang = (float)t * 2.0f * PI / 3.0f - PI / 2.0f;
-                const float offsetR = minSide * 0.16f;
-                const float ringR   = minSide * 0.18f;
-                const float lU = c + cosf(ang) * offsetR / dstW;
-                const float lV = 0.5f + sinf(ang) * offsetR / dstH;
-                polystar(lU, lV,
-                         (ringR) / dstW, (ringR) / dstH,
-                         (ringR - minSide * 0.022f) / dstW,
-                         (ringR - minSide * 0.022f) / dstH,
-                         36, ang, false);
-                polystar(lU, lV,
-                         (ringR - minSide * 0.022f) / dstW,
-                         (ringR - minSide * 0.022f) / dstH,
-                         (ringR - minSide * 0.044f) / dstW,
-                         (ringR - minSide * 0.044f) / dstH,
-                         36, ang + PI / 36.0f, true);
-            }
-            // Centre boss
-            polystar(c, 0.5f,
-                     (minSide * 0.045f) / dstW, (minSide * 0.045f) / dstH,
-                     (minSide * 0.025f) / dstW, (minSide * 0.025f) / dstH,
-                     12, 0.0f, false);
-        };
-        interlace(cU_left);
-        interlace(cU_right);
-        if (drawChain) {
-            const float aVtop = (bandPx + minSide * 0.035f + minSide * 0.012f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 7;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                // Trefoil at each anchor
-                for (int j = 0; j < 3; ++j) {
-                    const float ang = (float)j * 2.0f * PI / 3.0f - PI / 2.0f;
-                    const float lU = uPos + cosf(ang) * (minSide * 0.020f) / dstW;
-                    polystar(lU, aVtop + sinf(ang) * (minSide * 0.020f) / dstH,
-                             (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
-                             (minSide*0.012f)/dstW, (minSide*0.012f)/dstH,
-                             12, ang, false);
-                    polystar(lU, aVbot + sinf(ang) * (minSide * 0.020f) / dstH,
-                             (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
-                             (minSide*0.012f)/dstW, (minSide*0.012f)/dstH,
-                             12, ang, false);
-                }
-            }
-        }
-    } else if (style == 16) {
-        // -------- Style 16: Fractal mandala (3-level recursive petals) --------
-        // Each main petal hosts a 4-petal sub-flower at its mid-point, and
-        // each sub-flower's center has a tiny 3-petal micro-flower. Three
-        // levels of self-similar floral ornament.
-        auto microFlower = [&](float cU, float cV, float baseAng, float scale) {
-            for (int i = 0; i < 4; ++i) {
-                const float ang = baseAng + (float)i * PI / 2.0f;
-                petal(cU, cV, ang,
-                      (minSide * 0.035f * scale) / dstW,
-                      (minSide * 0.035f * scale) / dstH,
-                      (minSide * 0.010f * scale) / dstW,
-                      (minSide * 0.010f * scale) / dstH, false);
-            }
-        };
-        auto mandala = [&](float c) {
-            const int MAIN = 8;
-            for (int i = 0; i < MAIN; ++i) {
-                const float ang = (float)i * 2.0f * PI / (float)MAIN;
-                // Long main petal
-                petal(c, 0.5f, ang,
-                      (minSide * 0.42f) / dstW, (minSide * 0.42f) / dstH,
-                      (minSide * 0.055f) / dstW, (minSide * 0.055f) / dstH, false);
-                // Sub-flower at petal mid-point (4 small petals)
-                const float midR = minSide * 0.24f;
-                const float subU = c + cosf(ang) * midR / dstW;
-                const float subV = 0.5f + sinf(ang) * midR / dstH;
-                for (int j = 0; j < 4; ++j) {
-                    const float subAng = ang + (float)j * PI / 2.0f + PI / 4.0f;
-                    petal(subU, subV, subAng,
-                          (minSide * 0.060f) / dstW, (minSide * 0.060f) / dstH,
-                          (minSide * 0.014f) / dstW, (minSide * 0.014f) / dstH, false);
-                }
-                // Micro-flower (3-petal) at sub-flower center punched as hole
-                polystar(subU, subV,
-                         (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
-                         (minSide*0.010f)/dstW, (minSide*0.010f)/dstH,
-                         6, ang, true);
-            }
-            // Centre punch + ring
-            polystar(c, 0.5f,
-                     (minSide*0.080f)/dstW, (minSide*0.080f)/dstH,
-                     (minSide*0.060f)/dstW, (minSide*0.060f)/dstH,
-                     16, 0.0f, false);
-            polystar(c, 0.5f,
-                     (minSide*0.045f)/dstW, (minSide*0.045f)/dstH,
-                     (minSide*0.025f)/dstW, (minSide*0.025f)/dstH,
-                     12, PI/12.0f, true);
-            microFlower(c, 0.5f, 0.0f, 0.7f);
-        };
-        mandala(cU_left);
-        mandala(cU_right);
-        if (drawChain) {
-            const float aVtop = (bandPx + minSide * 0.030f + minSide * 0.012f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 8;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                microFlower(uPos, aVtop, (float)k * PI / 8.0f, 0.7f);
-                microFlower(uPos, aVbot, (float)k * PI / 8.0f, 0.7f);
-            }
-        }
-    } else if (style == 17) {
-        // -------- Style 17: Climbing-vine arabesque --------
-        // A sinuous S-curve stem winding through the medallion, with
-        // alternating leaves along its length. Both medallions and the
-        // chain share this organic flowing motif.
-        auto vine = [&](float c) {
-            const int SEG = 12;
-            const float stemR = minSide * 0.34f;
-            // Master spiral approximated as polyline; petals branch off
-            // each anchor point alternating sides.
-            float prevU = 0.0f, prevV = 0.0f;
-            for (int i = 0; i <= SEG; ++i) {
-                const float t = (float)i / (float)SEG;
-                // Logarithmic-ish spiral
-                const float ang = t * 3.0f * PI;
-                const float r = stemR * (1.0f - 0.6f * t);
-                const float u = c + cosf(ang) * r / dstW;
-                const float v = 0.5f + sinf(ang) * r / dstH;
-                if (i > 0) {
-                    // Thicken stem via two parallel curves
-                    const float perpU = -sinf(ang) * (minSide * 0.012f) / dstW;
-                    const float perpV =  cosf(ang) * (minSide * 0.012f) / dstH;
-                    line(prevU + perpU, prevV + perpV, u + perpU, v + perpV);
-                    line(u - perpU, v - perpV, prevU - perpU, prevV - perpV);
-                }
-                if (i > 0 && i < SEG) {
-                    // Leaf branching outward (perpendicular to stem)
-                    const float leafAng = ang + (((i & 1) == 0) ? PI/2.0f : -PI/2.0f);
-                    petal(u, v, leafAng,
-                          (minSide * 0.075f) / dstW, (minSide * 0.075f) / dstH,
-                          (minSide * 0.025f) / dstW, (minSide * 0.025f) / dstH, false);
-                    // Secondary smaller leaf opposite
-                    petal(u, v, leafAng + PI,
-                          (minSide * 0.035f) / dstW, (minSide * 0.035f) / dstH,
-                          (minSide * 0.011f) / dstW, (minSide * 0.011f) / dstH, false);
-                }
-                prevU = u; prevV = v;
-            }
-            // Bud at spiral centre
-            polystar(c, 0.5f,
-                     (minSide*0.045f)/dstW, (minSide*0.045f)/dstH,
-                     (minSide*0.025f)/dstW, (minSide*0.025f)/dstH,
-                     8, 0.0f, false);
-            polystar(c, 0.5f,
-                     (minSide*0.020f)/dstW, (minSide*0.020f)/dstH,
-                     (minSide*0.010f)/dstW, (minSide*0.010f)/dstH,
-                     6, PI/6.0f, true);
-        };
-        vine(cU_left);
-        vine(cU_right);
-        if (drawChain) {
-            // Chain: undulating leaf vine along top + bottom
-            const float aVtop = (bandPx + minSide * 0.030f + minSide * 0.012f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 22;
-            const float u0 = chainMarginU;
-            const float u1 = 1.0f - chainMarginU;
-            for (int k = 0; k <= N; ++k) {
-                const float tt = (float)k / (float)N;
-                const float u = u0 + tt * (u1 - u0);
-                const float phaseTop = sinf(tt * 8.0f * PI) * (minSide * 0.012f) / dstH;
-                const float phaseBot = sinf(tt * 8.0f * PI + PI) * (minSide * 0.012f) / dstH;
-                if ((k & 1) == 0) {
-                    petal(u, aVtop + phaseTop, ((k & 2) == 0) ? PI*0.5f : -PI*0.5f,
-                          (minSide*0.022f)/dstW, (minSide*0.022f)/dstH,
-                          (minSide*0.008f)/dstW, (minSide*0.008f)/dstH, false);
-                    petal(u, aVbot + phaseBot, ((k & 2) == 0) ? -PI*0.5f : PI*0.5f,
-                          (minSide*0.022f)/dstW, (minSide*0.022f)/dstH,
-                          (minSide*0.008f)/dstW, (minSide*0.008f)/dstH, false);
-                }
-            }
-        }
-    } else if (style == 18) {
-        // -------- Style 18: Crescent rosette --------
-        // 8 overlapping crescent shapes (built from two arcs) arranged in a
-        // ring, like a stylized moon-petal flower. Each crescent: an outer
-        // arc CCW + an inner arc CW with offset center, creating a curved
-        // sliver.
-        auto crescent = [&](float cU, float cV, float ang, float scale) {
-            const int ARC = 14;
-            const float R   = minSide * 0.10f * scale;
-            const float rIn = minSide * 0.078f * scale;
-            const float offset = minSide * 0.030f * scale;
-            // Center of outer arc
-            const float ocU = cU;
-            const float ocV = cV;
-            // Center of inner arc shifted along ang
-            const float icU = cU + cosf(ang) * offset / dstW;
-            const float icV = cV + sinf(ang) * offset / dstH;
-            // Outer arc CCW from ang+PI/2 → ang-PI/2 (180°)
-            float prevU = 0.0f, prevV = 0.0f;
-            for (int i = 0; i <= ARC; ++i) {
-                const float t = (float)i / (float)ARC;
-                const float a = ang + PI * 0.5f + t * PI; // CCW outer
-                const float u = ocU + cosf(a) * R / dstW;
-                const float v = ocV + sinf(a) * R / dstH;
-                if (i > 0) line(prevU, prevV, u, v);
-                prevU = u; prevV = v;
-            }
-            // Inner arc CW (returning), from ang-PI/2 → ang+PI/2
-            for (int i = 0; i <= ARC; ++i) {
-                const float t = (float)i / (float)ARC;
-                const float a = ang - PI * 0.5f - t * PI; // sweep back
-                const float u = icU + cosf(a) * rIn / dstW;
-                const float v = icV + sinf(a) * rIn / dstH;
-                if (i > 0) line(prevU, prevV, u, v);
-                else       line(prevU, prevV, u, v);
-                prevU = u; prevV = v;
-            }
-        };
-        auto crescentRose = [&](float c) {
-            const int N = 8;
-            const float ringR = minSide * 0.24f;
-            for (int i = 0; i < N; ++i) {
-                const float ang = (float)i * 2.0f * PI / (float)N;
-                const float cxU = c + cosf(ang) * ringR / dstW;
-                const float cyV = 0.5f + sinf(ang) * ringR / dstH;
-                crescent(cxU, cyV, ang, 1.0f);
-            }
-            // Inner ring of 4 smaller crescents
-            const float innerR = minSide * 0.085f;
-            for (int i = 0; i < 4; ++i) {
-                const float ang = (float)i * PI / 2.0f + PI / 4.0f;
-                const float cxU = c + cosf(ang) * innerR / dstW;
-                const float cyV = 0.5f + sinf(ang) * innerR / dstH;
-                crescent(cxU, cyV, ang, 0.55f);
-            }
-            // Centre boss
-            polystar(c, 0.5f,
-                     (minSide*0.030f)/dstW, (minSide*0.030f)/dstH,
-                     (minSide*0.022f)/dstW, (minSide*0.022f)/dstH,
-                     8, 0.0f, false);
-        };
-        crescentRose(cU_left);
-        crescentRose(cU_right);
-        if (drawChain) {
-            const float aVtop = (bandPx + minSide * 0.035f + minSide * 0.012f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 9;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                const float ang = (float)k * PI / 4.0f;
-                crescent(uPos, aVtop, ang, 0.50f);
-                crescent(uPos, aVbot, -ang, 0.50f);
-            }
-        }
-    } else if (style == 19) {
-        // -------- Style 19: Hexagonal tessellation field --------
-        // No end medallions. Instead, fill the interior with a regular
-        // tessellation of small hex stars. Different layout regime → very
-        // distinctive look.
-        const float cellPx = minSide * 0.085f;
-        const float cellU = cellPx / dstW;
-        const float cellV = cellPx / dstH;
-        const float interiorU0 = bandPx / dstW + cellU;
-        const float interiorU1 = 1.0f - interiorU0;
-        const float interiorV0 = bandPx / dstH + cellV;
-        const float interiorV1 = 1.0f - interiorV0;
-        const float rowStep = cellV * 1.55f;
-        const float colStep = cellU * 1.80f;
-        int row = 0;
-        for (float v = interiorV0; v <= interiorV1; v += rowStep) {
-            const float xOff = ((row & 1) == 0) ? 0.0f : colStep * 0.5f;
-            for (float u = interiorU0 + xOff; u <= interiorU1; u += colStep) {
-                polystar(u, v,
-                         (cellPx * 0.45f) / dstW, (cellPx * 0.45f) / dstH,
-                         (cellPx * 0.22f) / dstW, (cellPx * 0.22f) / dstH,
-                         6, (row & 1 ? PI/6.0f : 0.0f), false);
-                polystar(u, v,
-                         (cellPx * 0.18f) / dstW, (cellPx * 0.18f) / dstH,
-                         (cellPx * 0.09f) / dstW, (cellPx * 0.09f) / dstH,
-                         6, (row & 1 ? 0.0f : PI/6.0f), true);
-            }
-            ++row;
-        }
-    } else if (style == 20) {
-        // -------- Style 20: Corner cartouches --------
-        // No end medallions. Instead, four ornate triangular corner
-        // cartouches with arcing inner edge — like the corners of an
-        // illuminated manuscript page.
-        const float cornerU = (bandPx + minSide * 0.015f) / dstW;
-        const float cornerV = (bandPx + minSide * 0.015f) / dstH;
-        const float cornerSize = minSide * 0.34f;
-        auto cornerPiece = [&](float anchorU, float anchorV, float dirU, float dirV) {
-            // Triangular corner from anchor extending inward by (dirU, dirV)
-            const float farU = anchorU + dirU * cornerSize / dstW;
-            const float farV = anchorV + dirV * cornerSize / dstH;
-            // Filled fan with 5 petals radiating inward
-            for (int p = 0; p < 5; ++p) {
-                const float t = (float)p / 4.0f;  // 0..1
-                const float ang = atan2f(dirV, dirU) + (t - 0.5f) * (PI * 0.6f);
-                petal(anchorU, anchorV, ang,
-                      (cornerSize * 0.80f) / dstW, (cornerSize * 0.80f) / dstH,
-                      (minSide * 0.025f) / dstW, (minSide * 0.025f) / dstH, false);
-            }
-            // Rosette boss near the far point
-            polystar(farU * 0.4f + anchorU * 0.6f, farV * 0.4f + anchorV * 0.6f,
-                     (minSide * 0.040f) / dstW, (minSide * 0.040f) / dstH,
-                     (minSide * 0.024f) / dstW, (minSide * 0.024f) / dstH,
-                     8, 0.0f, false);
-            polystar(farU * 0.4f + anchorU * 0.6f, farV * 0.4f + anchorV * 0.6f,
-                     (minSide * 0.022f) / dstW, (minSide * 0.022f) / dstH,
-                     (minSide * 0.012f) / dstW, (minSide * 0.012f) / dstH,
-                     6, PI/6.0f, true);
-        };
-        cornerPiece(cornerU,        cornerV,         +1.0f, +1.0f);
-        cornerPiece(1.0f-cornerU,   cornerV,         -1.0f, +1.0f);
-        cornerPiece(cornerU,        1.0f-cornerV,    +1.0f, -1.0f);
-        cornerPiece(1.0f-cornerU,   1.0f-cornerV,    -1.0f, -1.0f);
-        // Central decoration: a horizontal flowing chain of small
-        // ornaments spanning across the band.
-        const float aV = 0.5f;
-        const int N = 7;
-        for (int k = 0; k < N; ++k) {
-            const float t = (float)(k + 1) / (float)(N + 1);
-            const float uPos = 0.35f + t * 0.30f;
-            if ((k & 1) == 0) {
-                polystar(uPos, aV,
-                         (minSide * 0.022f) / dstW, (minSide * 0.022f) / dstH,
-                         (minSide * 0.011f) / dstW, (minSide * 0.011f) / dstH,
-                         8, 0.0f, false);
-            } else {
-                petal(uPos, aV, 0.0f,
-                      (minSide * 0.030f) / dstW, (minSide * 0.030f) / dstH,
-                      (minSide * 0.008f) / dstW, (minSide * 0.008f) / dstH, false);
-                petal(uPos, aV, PI,
-                      (minSide * 0.030f) / dstW, (minSide * 0.030f) / dstH,
-                      (minSide * 0.008f) / dstW, (minSide * 0.008f) / dstH, false);
-            }
-        }
-    } else if (style == 21) {
-        // -------- Style 21: Bold calligraphic flourish --------
-        // A single dramatic asymmetric swirl per medallion: thick
-        // S-curve with a bulb at one end, like a Tughra calligraphic
-        // mark or a stylized leaf. Much bolder than the symmetric
-        // mandalas.
-        auto flourish = [&](float c, bool mirror) {
-            const float sgn = mirror ? -1.0f : 1.0f;
-            const float SCALE = minSide * 0.36f;
-            // Thick S-curve: two arcs concatenated with offset.
-            // Approximated as polyline.
-            const int SEG = 24;
-            float prevUO = 0.0f, prevVO = 0.0f, prevUI = 0.0f, prevVI = 0.0f;
-            for (int i = 0; i <= SEG; ++i) {
-                const float t = (float)i / (float)SEG;
-                // S-curve parameter: x = sgn*SCALE*(t*2-1), y = SCALE*sin(t*2*PI)*0.6
-                const float xC = sgn * SCALE * (t * 2.0f - 1.0f);
-                const float yC = SCALE * sinf(t * 2.0f * PI) * 0.45f;
-                // Tangent direction
-                const float dx = sgn * SCALE * 2.0f;
-                const float dy = SCALE * cosf(t * 2.0f * PI) * 2.0f * PI * 0.45f;
-                const float dlen = sqrtf(dx*dx + dy*dy);
-                const float perpX = -dy / dlen;
-                const float perpY =  dx / dlen;
-                const float thickness = minSide * 0.045f * (1.0f - 0.5f * fabsf(t * 2.0f - 1.0f));
-                const float uO = c + (xC + perpX * thickness) / dstW;
-                const float vO = 0.5f + (yC + perpY * thickness) / dstH;
-                const float uI = c + (xC - perpX * thickness) / dstW;
-                const float vI = 0.5f + (yC - perpY * thickness) / dstH;
-                if (i > 0) {
-                    line(prevUO, prevVO, uO, vO);
-                    line(uI, vI, prevUI, prevVI);
-                }
-                prevUO = uO; prevVO = vO;
-                prevUI = uI; prevVI = vI;
-            }
-            // Bulb at start
-            polystar(c + sgn * (-SCALE) / dstW, 0.5f,
-                     (minSide * 0.055f) / dstW, (minSide * 0.055f) / dstH,
-                     (minSide * 0.040f) / dstW, (minSide * 0.040f) / dstH,
-                     12, 0.0f, false);
-            // Pointed tip at end (petal pointing outward)
-            petal(c + sgn * (SCALE * 0.9f) / dstW, 0.5f,
-                  sgn > 0 ? 0.3f : PI - 0.3f,
-                  (minSide * 0.075f) / dstW, (minSide * 0.075f) / dstH,
-                  (minSide * 0.015f) / dstW, (minSide * 0.015f) / dstH, false);
-            // Accent dots above and below the centre
-            polystar(c, 0.5f - (minSide * 0.12f) / dstH,
-                     (minSide * 0.020f) / dstW, (minSide * 0.020f) / dstH,
-                     (minSide * 0.010f) / dstW, (minSide * 0.010f) / dstH,
-                     6, 0.0f, false);
-            polystar(c, 0.5f + (minSide * 0.12f) / dstH,
-                     (minSide * 0.020f) / dstW, (minSide * 0.020f) / dstH,
-                     (minSide * 0.010f) / dstW, (minSide * 0.010f) / dstH,
-                     6, 0.0f, false);
-        };
-        flourish(cU_left, false);
-        flourish(cU_right, true);
-        if (drawChain) {
-            // Tiny mirror flourishes along the band
-            const float aVtop = (bandPx + minSide * 0.035f + minSide * 0.012f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 11;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                petal(uPos, aVtop, (k & 1 ? PI*0.25f : PI*0.75f),
-                      (minSide*0.030f)/dstW, (minSide*0.030f)/dstH,
-                      (minSide*0.007f)/dstW, (minSide*0.007f)/dstH, false);
-                petal(uPos, aVbot, (k & 1 ? -PI*0.25f : -PI*0.75f),
-                      (minSide*0.030f)/dstW, (minSide*0.030f)/dstH,
-                      (minSide*0.007f)/dstW, (minSide*0.007f)/dstH, false);
-            }
-        }
-    } else if (style == 22) {
-        // -------- Style 22: Recursive floral fractal --------
-        // Each of the 6 main petals carries 4 child petals branching off
-        // its sides — a one-level L-system that creates a "flower of
-        // flowers" silhouette.
-        auto fractalBloom = [&](float c) {
-            const float Lmain = minSide * 0.36f;
-            const float Wmain = minSide * 0.075f;
-            for (int p = 0; p < 6; ++p) {
-                const float ang = (float)p * 2.0f * PI / 6.0f;
-                petal(c, 0.5f, ang,
-                      Lmain/dstW, Lmain/dstH,
-                      Wmain/dstW, Wmain/dstH, false);
-                // Child petals: 4 branching out at 60° increments from
-                // the main petal's mid-point, perpendicular to its axis.
-                const float midR = Lmain * 0.55f;
-                const float cxU = c + cosf(ang) * midR / dstW;
-                const float cyV = 0.5f + sinf(ang) * midR / dstH;
-                const float Lc = minSide * 0.12f;
-                const float Wc = minSide * 0.022f;
-                for (int q = -2; q <= 2; ++q) {
-                    if (q == 0) continue;
-                    const float subAng = ang + (float)q * (PI / 6.0f);
-                    petal(cxU, cyV, subAng,
-                          Lc/dstW, Lc/dstH,
-                          Wc/dstW, Wc/dstH, false);
-                }
-            }
-            // Inner ring: 12 short pointed petals
-            const float Lin = minSide * 0.10f, Win = minSide * 0.022f;
-            for (int p = 0; p < 12; ++p) {
-                const float ang = PI/12.0f + (float)p * 2.0f * PI / 12.0f;
-                petal(c, 0.5f, ang,
-                      Lin/dstW, Lin/dstH,
-                      Win/dstW, Win/dstH, false);
-            }
-            // Centre pip: tiny 8-pointed star ring
-            polystar(c, 0.5f,
-                     (minSide*0.038f)/dstW, (minSide*0.038f)/dstH,
-                     (minSide*0.030f)/dstW, (minSide*0.030f)/dstH,
-                     8, 0.0f, true);
-            polystar(c, 0.5f,
-                     (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
-                     (minSide*0.008f)/dstW, (minSide*0.008f)/dstH,
-                     6, 0.0f, false);
-        };
-        fractalBloom(cU_left);
-        fractalBloom(cU_right);
-        if (drawChain) {
-            // Chain: tiny 3-petal trefoils
-            const float L = minSide * 0.034f, W = minSide * 0.011f;
-            const float aVtop = (bandPx + L + minSide * 0.012f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 9;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                for (int q = 0; q < 3; ++q) {
-                    const float ang = (float)q * 2.0f * PI / 3.0f - PI * 0.5f;
-                    petal(uPos, aVtop, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                    petal(uPos, aVbot, -ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                }
-            }
-        }
-    } else if (style == 23) {
-        // -------- Style 23: Double cardioid garland --------
-        // Two heart-shaped (cardioid) curves traced in opposite phases,
-        // forming a interlocking lobed silhouette. r = a(1 - cos(θ - φ));
-        // sampling as polyline gives a continuous outline. Filled with
-        // non-zero winding by tracing one CCW and the other CW.
-        auto cardioidPair = [&](float c) {
-            const float a1 = minSide * 0.20f;
-            const float a2 = minSide * 0.13f;
+    };
+    drawKiss(kissLU, kissOpt);
+    drawKiss(kissRU, kissOpt);
+
+    // ---- Slot 3: flourish in the band above/below the loops ----
+    auto drawFlourish = [&](int opt) {
+        if (opt == 0) return;
+        const float aVtop = (bandPx + minSide * 0.012f) / dstH;
+        const float aVbot = 1.0f - aVtop;
+        const float uMin = (bandPx + minSide * 0.020f) / dstW;
+        const float uMax = 1.0f - uMin;
+        if (opt == 1) {
+            // Sine waveline ribbon
             const int SEG = 96;
-            // Outer cardioid (pointing up-ish), CCW
-            float prevU = 0.0f, prevV = 0.0f;
-            for (int i = 0; i <= SEG; ++i) {
-                const float th = (float)i * 2.0f * PI / (float)SEG;
-                const float r = a1 * (1.0f - cosf(th));
-                const float x = sinf(th) * r;
-                const float y = cosf(th) * r - a1; // shift so cusp sits at centre
-                const float u = c + x / dstW;
-                const float v = 0.5f + y / dstH;
-                if (i > 0) line(prevU, prevV, u, v);
-                prevU = u; prevV = v;
-            }
-            // Inner cardioid (mirrored, CW = hole) — creates the lobed
-            // ring effect.
-            for (int i = 0; i <= SEG; ++i) {
-                const float th = (float)i * 2.0f * PI / (float)SEG;
-                const float r = a2 * (1.0f - cosf(th));
-                const float x = -sinf(th) * r; // CW
-                const float y = -cosf(th) * r + a2;
-                const float u = c + x / dstW;
-                const float v = 0.5f + y / dstH;
-                if (i > 0) line(prevU, prevV, u, v);
-                prevU = u; prevV = v;
-            }
-            // Decorative petal cluster around the cusp
-            const float Lp = minSide * 0.060f, Wp = minSide * 0.014f;
-            for (int p = 0; p < 8; ++p) {
-                const float ang = (float)p * 2.0f * PI / 8.0f;
-                petal(c, 0.5f, ang, Lp/dstW, Lp/dstH, Wp/dstW, Wp/dstH, false);
-            }
-            // Centre stud
-            polystar(c, 0.5f,
-                     (minSide*0.022f)/dstW, (minSide*0.022f)/dstH,
-                     (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
-                     6, 0.0f, false);
-        };
-        cardioidPair(cU_left);
-        cardioidPair(cU_right);
-        if (drawChain) {
-            // Chain: small cardioids, alternating top/bottom orientation
-            const float a = minSide * 0.024f;
-            const float aVtop = (bandPx + a * 2.0f + minSide * 0.010f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 9;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                const float ySgn = (k & 1) ? -1.0f : 1.0f;
-                float prevU = 0.0f, prevV = 0.0f;
-                const int SEG = 32;
-                for (int i = 0; i <= SEG; ++i) {
-                    const float th = (float)i * 2.0f * PI / (float)SEG;
-                    const float r = a * (1.0f - cosf(th));
-                    const float xC = sinf(th) * r;
-                    const float yC = ySgn * (cosf(th) * r - a);
-                    const float u = uPos + xC / dstW;
-                    const float vTop = aVtop + yC / dstH;
-                    const float vBot = aVbot - yC / dstH;
-                    if (i > 0) {
-                        line(prevU, prevV, u, vTop);
-                    }
-                    prevU = u; prevV = vTop;
-                }
-                // Bottom row independently
-                prevU = 0.0f; prevV = 0.0f;
-                for (int i = 0; i <= SEG; ++i) {
-                    const float th = (float)i * 2.0f * PI / (float)SEG;
-                    const float r = a * (1.0f - cosf(th));
-                    const float xC = sinf(th) * r;
-                    const float yC = -ySgn * (cosf(th) * r - a);
-                    const float u = uPos + xC / dstW;
-                    const float v = aVbot + yC / dstH;
-                    if (i > 0) line(prevU, prevV, u, v);
-                    prevU = u; prevV = v;
-                }
-            }
-        }
-    } else if (style == 24) {
-        // -------- Style 24: Bud-cluster mandala --------
-        // Concentric rings of tiny teardrop "buds", each ring rotated by
-        // half its angular step from the next — produces an iridescent,
-        // densely-packed bouquet feel. Outer ring is largest, inner
-        // rings shrink and tighten.
-        auto budCluster = [&](float c) {
-            struct Ring { float radius, len, halfW; int count; float phase; };
-            const Ring rings[] = {
-                { minSide * 0.34f, minSide * 0.080f, minSide * 0.018f, 18, 0.0f         },
-                { minSide * 0.27f, minSide * 0.070f, minSide * 0.020f, 14, PI / 14.0f   },
-                { minSide * 0.20f, minSide * 0.060f, minSide * 0.022f, 11, 0.0f         },
-                { minSide * 0.13f, minSide * 0.045f, minSide * 0.018f,  8, PI / 8.0f    },
-                { minSide * 0.07f, minSide * 0.028f, minSide * 0.013f,  6, 0.0f         },
-            };
-            for (const Ring& r : rings) {
-                for (int p = 0; p < r.count; ++p) {
-                    const float ang = r.phase + (float)p * 2.0f * PI / (float)r.count;
-                    const float cxU = c + cosf(ang) * r.radius / dstW;
-                    const float cyV = 0.5f + sinf(ang) * r.radius / dstH;
-                    // Bud points outward (radially away from centre).
-                    petal(cxU, cyV, ang,
-                          r.len / dstW, r.len / dstH,
-                          r.halfW / dstW, r.halfW / dstH, false);
-                }
-            }
-            // Centre: small 10-pointed star ring
-            polystar(c, 0.5f,
-                     (minSide*0.040f)/dstW, (minSide*0.040f)/dstH,
-                     (minSide*0.025f)/dstW, (minSide*0.025f)/dstH,
-                     10, 0.0f, false);
-            polystar(c, 0.5f,
-                     (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
-                     (minSide*0.008f)/dstW, (minSide*0.008f)/dstH,
-                     5, PI/5.0f, true);
-        };
-        budCluster(cU_left);
-        budCluster(cU_right);
-        if (drawChain) {
-            // Chain: pairs of opposing buds (vertical) along the band
-            const float L = minSide * 0.038f, W = minSide * 0.012f;
-            const float aVtop = (bandPx + L + minSide * 0.012f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 11;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                // Two buds head-to-head at top, head-to-head at bottom
-                petal(uPos, aVtop,  PI*0.5f, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                petal(uPos, aVtop, -PI*0.5f, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                petal(uPos, aVbot,  PI*0.5f, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                petal(uPos, aVbot, -PI*0.5f, L/dstW, L/dstH, W/dstW, W/dstH, false);
-            }
-        }
-    } else if (style == 25) {
-        // -------- Style 25: Lissajous knot rosette --------
-        // x = sin(a·t), y = sin(b·t + δ): with coprime (a,b) and many
-        // wraps, the curve self-intersects into a knotted lattice. Drawn
-        // as a thin polyline ribbon — produces an interlaced rosette.
-        auto lissajous = [&](float c) {
-            const float R = minSide * 0.32f;
-            const int SEG = 240;
-            const float A = 3.0f, B = 4.0f;       // 3:4 frequency ratio
-            const float DELTA = PI * 0.5f;
-            const float thickness = minSide * 0.012f;
-            float prevUO = 0.0f, prevVO = 0.0f, prevUI = 0.0f, prevVI = 0.0f;
-            for (int i = 0; i <= SEG; ++i) {
-                const float t = (float)i * 2.0f * PI / (float)SEG;
-                const float xC = R * sinf(A * t);
-                const float yC = R * sinf(B * t + DELTA);
-                // Tangent for ribbon perpendicular
-                const float dx = R * A * cosf(A * t);
-                const float dy = R * B * cosf(B * t + DELTA);
-                const float dlen = std::max(1e-6f, sqrtf(dx*dx + dy*dy));
-                const float perpX = -dy / dlen;
-                const float perpY =  dx / dlen;
-                const float uO = c + (xC + perpX * thickness) / dstW;
-                const float vO = 0.5f + (yC + perpY * thickness) / dstH;
-                const float uI = c + (xC - perpX * thickness) / dstW;
-                const float vI = 0.5f + (yC - perpY * thickness) / dstH;
-                if (i > 0) {
-                    line(prevUO, prevVO, uO, vO);
-                    line(uI, vI, prevUI, prevVI);
-                }
-                prevUO = uO; prevVO = vO;
-                prevUI = uI; prevVI = vI;
-            }
-            // Centre 6-petal flower over the knot
-            const float Lp = minSide * 0.10f, Wp = minSide * 0.028f;
-            for (int p = 0; p < 6; ++p) {
-                const float ang = (float)p * 2.0f * PI / 6.0f;
-                petal(c, 0.5f, ang, Lp/dstW, Lp/dstH, Wp/dstW, Wp/dstH, false);
-            }
-            polystar(c, 0.5f,
-                     (minSide*0.025f)/dstW, (minSide*0.025f)/dstH,
-                     (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
-                     8, 0.0f, true);
-        };
-        lissajous(cU_left);
-        lissajous(cU_right);
-        if (drawChain) {
-            // Chain: small lissajous loops (2:3 ratio)
-            const float R = minSide * 0.028f;
-            const float aVtop = (bandPx + R + minSide * 0.012f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 9;
-            const float thickness = minSide * 0.005f;
-            const int SEG = 48;
-            for (int k = 0; k < N; ++k) {
-                const float t0 = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t0 * (1.0f - 2.0f * chainMarginU);
-                for (int row = 0; row < 2; ++row) {
-                    const float vPos = (row == 0) ? aVtop : aVbot;
-                    float prevUO = 0, prevVO = 0, prevUI = 0, prevVI = 0;
-                    for (int i = 0; i <= SEG; ++i) {
-                        const float tt = (float)i * 2.0f * PI / (float)SEG;
-                        const float xC = R * sinf(2.0f * tt);
-                        const float yC = R * sinf(3.0f * tt + PI * 0.5f);
-                        const float dx = R * 2.0f * cosf(2.0f * tt);
-                        const float dy = R * 3.0f * cosf(3.0f * tt + PI * 0.5f);
-                        const float dlen = std::max(1e-6f, sqrtf(dx*dx + dy*dy));
-                        const float perpX = -dy / dlen;
-                        const float perpY =  dx / dlen;
-                        const float uO = uPos + (xC + perpX * thickness) / dstW;
-                        const float vO = vPos + (yC + perpY * thickness) / dstH;
-                        const float uI = uPos + (xC - perpX * thickness) / dstW;
-                        const float vI = vPos + (yC - perpY * thickness) / dstH;
-                        if (i > 0) {
-                            line(prevUO, prevVO, uO, vO);
-                            line(uI, vI, prevUI, prevVI);
-                        }
-                        prevUO = uO; prevVO = vO;
-                        prevUI = uI; prevVI = vI;
-                    }
-                }
-            }
-        }
-    } else if (style == 26) {
-        // -------- Style 26: Logarithmic spiral nautilus --------
-        // r = a·exp(b·θ): traces a self-similar nautilus shell. Drawn as
-        // a thickening ribbon (thickness scales with r) so the spiral
-        // visually "grows" outward. Petals attached at each half-turn
-        // give it a floral nautilus look.
-        auto nautilus = [&](float c) {
-            const float a = minSide * 0.025f;
-            const float b = 0.22f;     // growth rate per radian
-            const float thetaMax = 4.5f * PI; // ~2.25 turns
-            const int SEG = 220;
-            float prevUO = 0, prevVO = 0, prevUI = 0, prevVI = 0;
-            for (int i = 0; i <= SEG; ++i) {
-                const float th = (float)i * thetaMax / (float)SEG;
-                const float r = a * expf(b * th);
-                const float xC = r * cosf(th);
-                const float yC = r * sinf(th);
-                // Tangent: dr/dθ = b·r, so direction = (cosθ - b·sinθ, sinθ + b·cosθ) * r
-                const float tx = cosf(th) - b * sinf(th);
-                const float ty = sinf(th) + b * cosf(th);
-                const float tlen = std::max(1e-6f, sqrtf(tx*tx + ty*ty));
-                const float perpX = -ty / tlen;
-                const float perpY =  tx / tlen;
-                const float thickness = r * 0.10f + minSide * 0.005f;
-                const float uO = c + (xC + perpX * thickness) / dstW;
-                const float vO = 0.5f + (yC + perpY * thickness) / dstH;
-                const float uI = c + (xC - perpX * thickness) / dstW;
-                const float vI = 0.5f + (yC - perpY * thickness) / dstH;
-                if (i > 0) {
-                    line(prevUO, prevVO, uO, vO);
-                    line(uI, vI, prevUI, prevVI);
-                }
-                prevUO = uO; prevVO = vO;
-                prevUI = uI; prevVI = vI;
-            }
-            // Petals at every half-turn along the spiral
-            for (int k = 1; k <= 4; ++k) {
-                const float th = (float)k * PI;
-                const float r = a * expf(b * th);
-                const float xC = r * cosf(th);
-                const float yC = r * sinf(th);
-                const float ang = th + PI * 0.5f; // perpendicular to radial
-                const float L = std::min(r * 0.6f, minSide * 0.08f);
-                const float W = L * 0.30f;
-                petal(c + xC / dstW, 0.5f + yC / dstH, ang,
-                      L/dstW, L/dstH, W/dstW, W/dstH, false);
-            }
-            // Mirror spiral (counter-rotating) — half intensity
-            float pUO = 0, pVO = 0, pUI = 0, pVI = 0;
-            for (int i = 0; i <= SEG; ++i) {
-                const float th = (float)i * thetaMax / (float)SEG;
-                const float r = a * expf(b * th);
-                const float xC = -r * cosf(th); // mirror x
-                const float yC = r * sinf(th);
-                const float tx = -(cosf(th) - b * sinf(th));
-                const float ty = sinf(th) + b * cosf(th);
-                const float tlen = std::max(1e-6f, sqrtf(tx*tx + ty*ty));
-                const float perpX = -ty / tlen;
-                const float perpY =  tx / tlen;
-                const float thickness = r * 0.06f + minSide * 0.003f;
-                const float uO = c + (xC + perpX * thickness) / dstW;
-                const float vO = 0.5f + (yC + perpY * thickness) / dstH;
-                const float uI = c + (xC - perpX * thickness) / dstW;
-                const float vI = 0.5f + (yC - perpY * thickness) / dstH;
-                if (i > 0) {
-                    line(pUO, pVO, uO, vO);
-                    line(uI, vI, pUI, pVI);
-                }
-                pUO = uO; pVO = vO;
-                pUI = uI; pVI = vI;
-            }
-        };
-        nautilus(cU_left);
-        nautilus(cU_right);
-        if (drawChain) {
-            // Chain: alternating tiny spirals + petals
-            const float aVtop = (bandPx + minSide * 0.030f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 11;
-            const float L = minSide * 0.030f, W = minSide * 0.009f;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                if ((k & 1) == 0) {
-                    // Small spiral as 3-petal pinwheel
-                    for (int q = 0; q < 3; ++q) {
-                        const float ang = (float)q * 2.0f * PI / 3.0f;
-                        petal(uPos, aVtop, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                        petal(uPos, aVbot, -ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                    }
-                } else {
-                    // Tiny rosette: 6 short petals
-                    const float Ls = L * 0.7f, Ws = W * 0.9f;
-                    for (int q = 0; q < 6; ++q) {
-                        const float ang = (float)q * 2.0f * PI / 6.0f;
-                        petal(uPos, aVtop, ang, Ls/dstW, Ls/dstH, Ws/dstW, Ws/dstH, false);
-                        petal(uPos, aVbot, ang, Ls/dstW, Ls/dstH, Ws/dstW, Ws/dstH, false);
-                    }
-                }
-            }
-        }
-    } else if (style == 27) {
-        // -------- Style 27: Branching fractal tree --------
-        // Symmetric binary tree growing outward from medallion centre.
-        // Each branch is a thin line, and every leaf-tip has a small
-        // petal-flower. Two recursion levels keep it readable at this
-        // scale.
-        auto fractalTree = [&](float c) {
-            // Branch helper: draw a thick line as two parallel lines.
-            auto branch = [&](float x0, float y0, float x1, float y1, float halfW) {
-                const float dx = x1 - x0, dy = y1 - y0;
-                const float dlen = std::max(1e-6f, sqrtf(dx*dx + dy*dy));
-                const float perpX = -dy / dlen * halfW;
-                const float perpY =  dx / dlen * halfW;
-                // Quad: (x0+p, y0+p) -> (x1+p, y1+p) -> (x1-p, y1-p) -> (x0-p, y0-p)
-                line(x0 + perpX, y0 + perpY, x1 + perpX, y1 + perpY);
-                line(x1 + perpX, y1 + perpY, x1 - perpX, y1 - perpY);
-                line(x1 - perpX, y1 - perpY, x0 - perpX, y0 - perpY);
-                line(x0 - perpX, y0 - perpY, x0 + perpX, y0 + perpY);
-            };
-            // 8 main branches radiating outward from centre (like a star)
-            const float L1 = minSide * 0.18f;
-            const float L2 = minSide * 0.10f;
-            const float L3 = minSide * 0.060f;
-            const float W1 = minSide * 0.008f;
-            const float W2 = minSide * 0.006f;
-            const float W3 = minSide * 0.004f;
-            const float branchAngle = PI * 0.30f; // ~54° sub-branch angle
-            for (int p = 0; p < 8; ++p) {
-                const float ang = (float)p * 2.0f * PI / 8.0f;
-                const float dirX = cosf(ang), dirY = sinf(ang);
-                // Main branch: centre → tip1
-                const float tip1X = dirX * L1, tip1Y = dirY * L1;
-                branch(c, 0.5f,
-                       c + tip1X / dstW, 0.5f + tip1Y / dstH,
-                       W1 / dstW);
-                // Sub-branches at tip1: two children at ±branchAngle
-                for (int side = 0; side < 2; ++side) {
-                    const float subAng = ang + (side == 0 ? branchAngle : -branchAngle);
-                    const float subX = tip1X + cosf(subAng) * L2;
-                    const float subY = tip1Y + sinf(subAng) * L2;
-                    branch(c + tip1X / dstW, 0.5f + tip1Y / dstH,
-                           c + subX / dstW, 0.5f + subY / dstH,
-                           W2 / dstW);
-                    // Sub-sub-branches (one more level)
-                    for (int side2 = 0; side2 < 2; ++side2) {
-                        const float ssAng = subAng + (side2 == 0 ? branchAngle * 0.7f : -branchAngle * 0.7f);
-                        const float ssX = subX + cosf(ssAng) * L3;
-                        const float ssY = subY + sinf(ssAng) * L3;
-                        branch(c + subX / dstW, 0.5f + subY / dstH,
-                               c + ssX / dstW, 0.5f + ssY / dstH,
-                               W3 / dstW);
-                        // Leaf-flower at tip: 4 tiny petals
-                        const float Lleaf = minSide * 0.018f, Wleaf = minSide * 0.007f;
-                        for (int q = 0; q < 4; ++q) {
-                            const float lang = ssAng + (float)q * PI * 0.5f;
-                            petal(c + ssX / dstW, 0.5f + ssY / dstH, lang,
-                                  Lleaf/dstW, Lleaf/dstH,
-                                  Wleaf/dstW, Wleaf/dstH, false);
-                        }
-                    }
-                }
-            }
-            // Centre: dense 12-petal hub
-            const float Lh = minSide * 0.050f, Wh = minSide * 0.015f;
-            for (int p = 0; p < 12; ++p) {
-                const float ang = (float)p * 2.0f * PI / 12.0f;
-                petal(c, 0.5f, ang, Lh/dstW, Lh/dstH, Wh/dstW, Wh/dstH, false);
-            }
-            polystar(c, 0.5f,
-                     (minSide*0.020f)/dstW, (minSide*0.020f)/dstH,
-                     (minSide*0.012f)/dstW, (minSide*0.012f)/dstH,
-                     6, 0.0f, false);
-        };
-        fractalTree(cU_left);
-        fractalTree(cU_right);
-        if (drawChain) {
-            // Chain: tiny Y-shaped branches alternating up/down
-            const float aVtop = (bandPx + minSide * 0.030f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const float L = minSide * 0.030f;
-            const int N = 11;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                // Trefoil leaf: 3 short petals
-                for (int q = 0; q < 3; ++q) {
-                    const float angT = (float)q * 2.0f * PI / 3.0f - PI * 0.5f;
-                    const float angB = (float)q * 2.0f * PI / 3.0f + PI * 0.5f;
-                    petal(uPos, aVtop, angT,
-                          L/dstW, L/dstH,
-                          (L*0.30f)/dstW, (L*0.30f)/dstH, false);
-                    petal(uPos, aVbot, angB,
-                          L/dstW, L/dstH,
-                          (L*0.30f)/dstW, (L*0.30f)/dstH, false);
-                }
-            }
-        }
-    } else if (style == 28) {
-        // -------- Style 28: Spirograph hypotrochoid --------
-        // Hypotrochoid: x = (R−r)cos(t) + d·cos(((R−r)/r)·t),
-        //               y = (R−r)sin(t) − d·sin(((R−r)/r)·t).
-        // With R=5, r=3, d=5 the curve closes after 3 revolutions and
-        // makes a classic 2-lobed asteroid; R=5,r=2,d=4 → a 3-cusp star.
-        auto spirograph = [&](float c) {
-            const float SCALE = minSide * 0.045f;
-            // (R, r, d) tuned for a dense rosette with 5 lobes
-            const float R = 5.0f, r = 2.0f, d = 4.0f;
-            const float thickness = minSide * 0.010f;
-            const int SEG = 360;
-            // Period: when t = 2π·r/gcd(R,r) = 2π since gcd(5,2)=1 →
-            // period = 2π·r = 4π. We do 5 full turns for a clean trace.
-            const float tMax = 2.0f * PI * r;
-            float prevUO = 0, prevVO = 0, prevUI = 0, prevVI = 0;
-            for (int i = 0; i <= SEG; ++i) {
-                const float t = (float)i * tMax / (float)SEG;
-                const float k = (R - r) / r;
-                const float xC = SCALE * ((R - r) * cosf(t) + d * cosf(k * t));
-                const float yC = SCALE * ((R - r) * sinf(t) - d * sinf(k * t));
-                // Tangent
-                const float dx = SCALE * (-(R - r) * sinf(t) - d * k * sinf(k * t));
-                const float dy = SCALE * ( (R - r) * cosf(t) - d * k * cosf(k * t));
-                const float dlen = std::max(1e-6f, sqrtf(dx*dx + dy*dy));
-                const float perpX = -dy / dlen;
-                const float perpY =  dx / dlen;
-                const float uO = c + (xC + perpX * thickness) / dstW;
-                const float vO = 0.5f + (yC + perpY * thickness) / dstH;
-                const float uI = c + (xC - perpX * thickness) / dstW;
-                const float vI = 0.5f + (yC - perpY * thickness) / dstH;
-                if (i > 0) {
-                    line(prevUO, prevVO, uO, vO);
-                    line(uI, vI, prevUI, prevVI);
-                }
-                prevUO = uO; prevVO = vO;
-                prevUI = uI; prevVI = vI;
-            }
-            // Inner ring + 5 petals to mark the lobe centres
-            polystar(c, 0.5f,
-                     (minSide*0.045f)/dstW, (minSide*0.045f)/dstH,
-                     (minSide*0.034f)/dstW, (minSide*0.034f)/dstH,
-                     10, 0.0f, true);
-            const float Lp = minSide * 0.060f, Wp = minSide * 0.016f;
-            for (int p = 0; p < 5; ++p) {
-                const float ang = (float)p * 2.0f * PI / 5.0f;
-                petal(c, 0.5f, ang, Lp/dstW, Lp/dstH, Wp/dstW, Wp/dstH, false);
-            }
-            // Centre tiny pip
-            polystar(c, 0.5f,
-                     (minSide*0.015f)/dstW, (minSide*0.015f)/dstH,
-                     (minSide*0.008f)/dstW, (minSide*0.008f)/dstH,
-                     5, 0.0f, false);
-        };
-        spirograph(cU_left);
-        spirograph(cU_right);
-        if (drawChain) {
-            // Chain: small 5-petal florets
-            const float L = minSide * 0.030f, W = minSide * 0.010f;
-            const float aVtop = (bandPx + L + minSide * 0.010f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 11;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                for (int q = 0; q < 5; ++q) {
-                    const float ang = (float)q * 2.0f * PI / 5.0f;
-                    petal(uPos, aVtop, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                    petal(uPos, aVbot, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                }
-            }
-        }
-    } else if (style == 29) {
-        // -------- Style 29: Sine vine wreath --------
-        // Sine wave wrapped around a circle: r(θ) = R + A·sin(N·θ). With
-        // small A and large N the curve undulates around a ring, giving a
-        // creeping-vine silhouette. Pairs of leaves sprout at every peak.
-        auto sineVine = [&](float c) {
-            const float R = minSide * 0.25f;
-            const float A = minSide * 0.035f;
-            const int N = 12;       // number of bumps per turn
-            const int SEG = 240;
-            const float thickness = minSide * 0.012f;
-            float prevUO = 0, prevVO = 0, prevUI = 0, prevVI = 0;
-            for (int i = 0; i <= SEG; ++i) {
-                const float th = (float)i * 2.0f * PI / (float)SEG;
-                const float rr = R + A * sinf((float)N * th);
-                const float xC = rr * cosf(th);
-                const float yC = rr * sinf(th);
-                // Tangent: d(r·cosθ)/dθ = r'·cosθ − r·sinθ
-                const float drdth = A * (float)N * cosf((float)N * th);
-                const float dx = drdth * cosf(th) - rr * sinf(th);
-                const float dy = drdth * sinf(th) + rr * cosf(th);
-                const float dlen = std::max(1e-6f, sqrtf(dx*dx + dy*dy));
-                const float perpX = -dy / dlen;
-                const float perpY =  dx / dlen;
-                const float uO = c + (xC + perpX * thickness) / dstW;
-                const float vO = 0.5f + (yC + perpY * thickness) / dstH;
-                const float uI = c + (xC - perpX * thickness) / dstW;
-                const float vI = 0.5f + (yC - perpY * thickness) / dstH;
-                if (i > 0) {
-                    line(prevUO, prevVO, uO, vO);
-                    line(uI, vI, prevUI, prevVI);
-                }
-                prevUO = uO; prevVO = vO;
-                prevUI = uI; prevVI = vI;
-            }
-            // Leaves at every peak (θ where sin(N·θ) = 1)
-            const float Lleaf = minSide * 0.055f, Wleaf = minSide * 0.018f;
-            for (int p = 0; p < N; ++p) {
-                const float th = (PI / (2.0f * (float)N)) + (float)p * 2.0f * PI / (float)N;
-                const float rPeak = R + A;
-                const float xC = rPeak * cosf(th);
-                const float yC = rPeak * sinf(th);
-                petal(c + xC / dstW, 0.5f + yC / dstH, th,
-                      Lleaf/dstW, Lleaf/dstH, Wleaf/dstW, Wleaf/dstH, false);
-            }
-            // Inner concentric vine (smaller wreath, counter-bumped)
-            float pUO = 0, pVO = 0, pUI = 0, pVI = 0;
-            const float R2 = minSide * 0.10f;
-            const float A2 = minSide * 0.018f;
-            const int N2 = 8;
-            const float thickness2 = minSide * 0.008f;
-            for (int i = 0; i <= SEG; ++i) {
-                const float th = (float)i * 2.0f * PI / (float)SEG;
-                const float rr = R2 + A2 * cosf((float)N2 * th);
-                const float xC = rr * cosf(th);
-                const float yC = rr * sinf(th);
-                const float drdth = -A2 * (float)N2 * sinf((float)N2 * th);
-                const float dx = drdth * cosf(th) - rr * sinf(th);
-                const float dy = drdth * sinf(th) + rr * cosf(th);
-                const float dlen = std::max(1e-6f, sqrtf(dx*dx + dy*dy));
-                const float perpX = -dy / dlen;
-                const float perpY =  dx / dlen;
-                const float uO = c + (xC + perpX * thickness2) / dstW;
-                const float vO = 0.5f + (yC + perpY * thickness2) / dstH;
-                const float uI = c + (xC - perpX * thickness2) / dstW;
-                const float vI = 0.5f + (yC - perpY * thickness2) / dstH;
-                if (i > 0) {
-                    line(pUO, pVO, uO, vO);
-                    line(uI, vI, pUI, pVI);
-                }
-                pUO = uO; pVO = vO;
-                pUI = uI; pVI = vI;
-            }
-            // Centre bud
-            polystar(c, 0.5f,
-                     (minSide*0.025f)/dstW, (minSide*0.025f)/dstH,
-                     (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
-                     6, 0.0f, false);
-        };
-        sineVine(cU_left);
-        sineVine(cU_right);
-        if (drawChain) {
-            // Chain: undulating sine waveline between medallions
-            const float aVtop = (bandPx + minSide * 0.025f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const float amp = minSide * 0.015f;
-            const float thickness = minSide * 0.004f;
-            const int SEG = 96;
-            const float u0 = chainMarginU;
-            const float u1 = 1.0f - chainMarginU;
+            const float amp = minSide * 0.011f;
+            const float thicknessPx2 = minSide * 0.003f;
             for (int row = 0; row < 2; ++row) {
-                const float vPos = (row == 0) ? aVtop : aVbot;
+                const float vCenter = (row == 0) ? aVtop : aVbot;
                 float prevUO = 0, prevVO = 0, prevUI = 0, prevVI = 0;
                 for (int i = 0; i <= SEG; ++i) {
                     const float t = (float)i / (float)SEG;
-                    const float u = u0 + t * (u1 - u0);
-                    const float yC = amp * sinf(t * 6.0f * PI);
-                    // perpendicular = (0, 1) approx (since the waveline
-                    // runs left-to-right we can take vertical perpendicular).
-                    const float uO = u;
-                    const float vO = vPos + (yC + thickness) / dstH;
-                    const float uI = u;
-                    const float vI = vPos + (yC - thickness) / dstH;
+                    const float u = uMin + t * (uMax - uMin);
+                    const float yC = amp * sinf(t * 8.0f * PI);
+                    const float vO = vCenter + (yC + thicknessPx2) / dstH;
+                    const float vI = vCenter + (yC - thicknessPx2) / dstH;
                     if (i > 0) {
-                        line(prevUO, prevVO, uO, vO);
-                        line(uI, vI, prevUI, prevVI);
+                        line(prevUO, prevVO, u, vO);
+                        line(u, vI, prevUI, prevVI);
                     }
-                    prevUO = uO; prevVO = vO;
-                    prevUI = uI; prevVI = vI;
+                    prevUO = u; prevVO = vO;
+                    prevUI = u; prevVI = vI;
                 }
             }
-            // Little leaves at the wave peaks
-            const float L = minSide * 0.018f, W = minSide * 0.008f;
-            for (int k = 0; k < 6; ++k) {
-                const float t = (2.0f * (float)k + 1.0f) / 12.0f;
-                const float u = u0 + t * (u1 - u0);
-                petal(u, aVtop - L * 0.6f / dstH, -PI*0.5f,
-                      L/dstW, L/dstH, W/dstW, W/dstH, false);
-                petal(u, aVbot + L * 0.6f / dstH,  PI*0.5f,
-                      L/dstW, L/dstH, W/dstW, W/dstH, false);
-            }
-        }
-    } else if (style == 30) {
-        // -------- Style 30: Filigree corner curls --------
-        // Bezier-style S-curve curls anchored at the medallion centre,
-        // each terminating in a small floret. Six curls radiate out,
-        // suggesting hand-drawn calligraphic filigree.
-        auto filigree = [&](float c) {
-            const float R0 = minSide * 0.06f;     // start radius
-            const float R1 = minSide * 0.32f;     // end radius
-            const float thickness = minSide * 0.010f;
-            const int SEG = 40;
-            const int CURLS = 6;
-            for (int p = 0; p < CURLS; ++p) {
-                const float baseAng = (float)p * 2.0f * PI / (float)CURLS;
-                // Curl traces a path where radius grows from R0 to R1 and
-                // angle deviates ±swirl as it goes outward.
-                const float swirl = PI * 0.55f;
-                float prevUO = 0, prevVO = 0, prevUI = 0, prevVI = 0;
-                for (int i = 0; i <= SEG; ++i) {
-                    const float t = (float)i / (float)SEG;
-                    const float rr = R0 + (R1 - R0) * t;
-                    const float ang = baseAng + swirl * sinf(t * PI);
-                    const float xC = rr * cosf(ang);
-                    const float yC = rr * sinf(ang);
-                    // Tangent (approximate by forward diff would be cleaner;
-                    // analytic: dx/dt = dr/dt·cos − r·dang/dt·sin etc).
-                    const float drdt = (R1 - R0);
-                    const float dangdt = swirl * PI * cosf(t * PI);
-                    const float dx = drdt * cosf(ang) - rr * dangdt * sinf(ang);
-                    const float dy = drdt * sinf(ang) + rr * dangdt * cosf(ang);
-                    const float dlen = std::max(1e-6f, sqrtf(dx*dx + dy*dy));
-                    const float perpX = -dy / dlen;
-                    const float perpY =  dx / dlen;
-                    // Thickness tapers: thick at base, thin at tip
-                    const float th = thickness * (1.0f - 0.7f * t);
-                    const float uO = c + (xC + perpX * th) / dstW;
-                    const float vO = 0.5f + (yC + perpY * th) / dstH;
-                    const float uI = c + (xC - perpX * th) / dstW;
-                    const float vI = 0.5f + (yC - perpY * th) / dstH;
-                    if (i > 0) {
-                        line(prevUO, prevVO, uO, vO);
-                        line(uI, vI, prevUI, prevVI);
-                    }
-                    prevUO = uO; prevVO = vO;
-                    prevUI = uI; prevVI = vI;
-                }
-                // Tip floret: 3 tiny petals
-                const float tipAng = baseAng + swirl * sinf(PI);
-                const float tipX = R1 * cosf(tipAng);
-                const float tipY = R1 * sinf(tipAng);
-                const float Lt = minSide * 0.030f, Wt = minSide * 0.011f;
-                for (int q = 0; q < 3; ++q) {
-                    const float la = tipAng + ((float)q - 1.0f) * 0.6f;
-                    petal(c + tipX / dstW, 0.5f + tipY / dstH, la,
-                          Lt/dstW, Lt/dstH, Wt/dstW, Wt/dstH, false);
-                }
-            }
-            // Centre boss: dense 8-petal flower
-            const float Lh = minSide * 0.055f, Wh = minSide * 0.018f;
-            for (int q = 0; q < 8; ++q) {
-                const float ang = (float)q * 2.0f * PI / 8.0f;
-                petal(c, 0.5f, ang, Lh/dstW, Lh/dstH, Wh/dstW, Wh/dstH, false);
-            }
-            polystar(c, 0.5f,
-                     (minSide*0.026f)/dstW, (minSide*0.026f)/dstH,
-                     (minSide*0.014f)/dstW, (minSide*0.014f)/dstH,
-                     8, 0.0f, true);
-            polystar(c, 0.5f,
-                     (minSide*0.010f)/dstW, (minSide*0.010f)/dstH,
-                     (minSide*0.005f)/dstW, (minSide*0.005f)/dstH,
-                     5, 0.0f, false);
-        };
-        filigree(cU_left);
-        filigree(cU_right);
-        if (drawChain) {
-            // Chain: small swirl-pairs (back-to-back curls)
-            const float aVtop = (bandPx + minSide * 0.030f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const float L = minSide * 0.030f;
+        } else if (opt == 2) {
+            // Trefoil leaf chain
+            const float L = minSide * 0.016f, W = L * 0.30f;
             const int N = 9;
             for (int k = 0; k < N; ++k) {
                 const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                const float W = L * 0.30f;
-                // Two opposing curls forming a back-to-back C pair
-                petal(uPos, aVtop, -PI * 0.25f, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                petal(uPos, aVtop, -PI * 0.75f, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                petal(uPos, aVbot,  PI * 0.25f, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                petal(uPos, aVbot,  PI * 0.75f, L/dstW, L/dstH, W/dstW, W/dstH, false);
-            }
-        }
-    } else if (style == 31) {
-        // -------- Style 31: Self-similar bud chain --------
-        // Six log-spiral chains of teardrop buds emanating from the
-        // centre. Each bud is rotated to follow the local spiral tangent
-        // and scales with its radial distance, so the whole shape stays
-        // self-similar across radii.
-        auto budChain = [&](float c) {
-            const int BUDS = 10;
-            const float aS = minSide * 0.06f;
-            const float bS = 0.32f;
-            for (int dir = 0; dir < 6; ++dir) {
-                const float anchorAng = (float)dir * 2.0f * PI / 6.0f;
-                for (int i = 0; i < BUDS; ++i) {
-                    const float th = (float)i * 0.45f;
-                    const float r = aS * expf(bS * th);
-                    const float xC = r * cosf(th + anchorAng);
-                    const float yC = r * sinf(th + anchorAng);
-                    const float tx = cosf(th + anchorAng) - bS * sinf(th + anchorAng);
-                    const float ty = sinf(th + anchorAng) + bS * cosf(th + anchorAng);
-                    const float tang = atan2f(ty, tx);
-                    const float Lf = std::min(r * 0.55f, minSide * 0.07f);
-                    const float Wf = Lf * 0.32f;
-                    petal(c + xC / dstW, 0.5f + yC / dstH, tang,
-                          Lf/dstW, Lf/dstH, Wf/dstW, Wf/dstH, false);
-                }
-            }
-            // Centre 6-petal hub + tiny star
-            const float Lh = minSide * 0.045f, Wh = minSide * 0.014f;
-            for (int p = 0; p < 6; ++p) {
-                const float ang = (float)p * 2.0f * PI / 6.0f + PI / 6.0f;
-                petal(c, 0.5f, ang, Lh/dstW, Lh/dstH, Wh/dstW, Wh/dstH, false);
-            }
-            polystar(c, 0.5f,
-                     (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
-                     (minSide*0.010f)/dstW, (minSide*0.010f)/dstH,
-                     6, 0.0f, true);
-        };
-        budChain(cU_left);
-        budChain(cU_right);
-        if (drawChain) {
-            // Chain: bud cascade — vertical buds with a slight size
-            // taper (peaks at the middle of the band).
-            const float aVtop = (bandPx + minSide * 0.025f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 11;
-            const float u0 = chainMarginU;
-            const float u1 = 1.0f - chainMarginU;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = u0 + t * (u1 - u0);
-                const float scale = 1.0f - 0.25f * fabsf(2.0f * t - 1.0f);
-                const float L = minSide * 0.030f * scale;
-                const float W = L * 0.32f;
-                petal(uPos, aVtop, -PI*0.5f, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                petal(uPos, aVbot,  PI*0.5f, L/dstW, L/dstH, W/dstW, W/dstH, false);
-            }
-        }
-    } else if (style == 32) {
-        // -------- Style 32: Damascus curvy interlace --------
-        // Two counter-rotating 8-pointed stars stacked offset, plus a
-        // 16-petal inner ring and two thin band rings — produces a
-        // woven-ribbon look reminiscent of Mamluk metalwork.
-        auto interlace = [&](float c) {
-            const float R1o = minSide * 0.36f, R1i = minSide * 0.16f;
-            const float R2o = minSide * 0.30f, R2i = minSide * 0.12f;
-            polystar(c, 0.5f, R1o/dstW, R1o/dstH, R1i/dstW, R1i/dstH,
-                     8, 0.0f, false);
-            polystar(c, 0.5f, R2o/dstW, R2o/dstH, R2i/dstW, R2i/dstH,
-                     8, PI/8.0f, true);
-            const float L = minSide * 0.10f, W = minSide * 0.018f;
-            for (int p = 0; p < 16; ++p) {
-                const float ang = (float)p * 2.0f * PI / 16.0f + PI / 16.0f;
-                petal(c, 0.5f, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
-            }
-            polystar(c, 0.5f,
-                     (minSide*0.090f)/dstW, (minSide*0.090f)/dstH,
-                     (minSide*0.078f)/dstW, (minSide*0.078f)/dstH,
-                     24, 0.0f, false);
-            polystar(c, 0.5f,
-                     (minSide*0.055f)/dstW, (minSide*0.055f)/dstH,
-                     (minSide*0.045f)/dstW, (minSide*0.045f)/dstH,
-                     20, 0.0f, true);
-            const float Lc = minSide * 0.035f, Wc = minSide * 0.012f;
-            for (int p = 0; p < 8; ++p) {
-                const float ang = (float)p * 2.0f * PI / 8.0f;
-                petal(c, 0.5f, ang, Lc/dstW, Lc/dstH, Wc/dstW, Wc/dstH, false);
-            }
-            polystar(c, 0.5f,
-                     (minSide*0.011f)/dstW, (minSide*0.011f)/dstH,
-                     (minSide*0.006f)/dstW, (minSide*0.006f)/dstH,
-                     4, PI/4.0f, false);
-        };
-        interlace(cU_left);
-        interlace(cU_right);
-        if (drawChain) {
-            const float aVtop = (bandPx + minSide * 0.025f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 11;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                if ((k & 1) == 0) {
-                    polystar(uPos, aVtop,
-                             (minSide*0.022f)/dstW, (minSide*0.022f)/dstH,
-                             (minSide*0.010f)/dstW, (minSide*0.010f)/dstH,
-                             8, 0.0f, false);
-                    polystar(uPos, aVbot,
-                             (minSide*0.022f)/dstW, (minSide*0.022f)/dstH,
-                             (minSide*0.010f)/dstW, (minSide*0.010f)/dstH,
-                             8, 0.0f, false);
-                } else {
-                    polystar(uPos, aVtop,
-                             (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
-                             (minSide*0.007f)/dstW, (minSide*0.007f)/dstH,
-                             4, PI/4.0f, false);
-                    polystar(uPos, aVbot,
-                             (minSide*0.018f)/dstW, (minSide*0.018f)/dstH,
-                             (minSide*0.007f)/dstW, (minSide*0.007f)/dstH,
-                             4, PI/4.0f, false);
-                }
-            }
-        }
-    } else if (style == 33) {
-        // -------- Style 33: Peony rosette --------
-        // Four concentric rings of overlapping rounded petals; each ring
-        // is offset by half its angular step from the next so the petals
-        // interleave like a real layered bloom. Centre is a tight stamen
-        // cluster of tiny diamonds around a small star.
-        auto peony = [&](float c) {
-            const float L1 = minSide * 0.32f, W1 = minSide * 0.095f;
-            for (int p = 0; p < 14; ++p) {
-                const float ang = (float)p * 2.0f * PI / 14.0f;
-                petal(c, 0.5f, ang, L1/dstW, L1/dstH, W1/dstW, W1/dstH, false);
-            }
-            const float L2 = minSide * 0.23f, W2 = minSide * 0.078f;
-            for (int p = 0; p < 11; ++p) {
-                const float ang = (PI / 11.0f) + (float)p * 2.0f * PI / 11.0f;
-                petal(c, 0.5f, ang, L2/dstW, L2/dstH, W2/dstW, W2/dstH, false);
-            }
-            const float L3 = minSide * 0.15f, W3 = minSide * 0.060f;
-            for (int p = 0; p < 9; ++p) {
-                const float ang = (float)p * 2.0f * PI / 9.0f;
-                petal(c, 0.5f, ang, L3/dstW, L3/dstH, W3/dstW, W3/dstH, false);
-            }
-            const float L4 = minSide * 0.09f, W4 = minSide * 0.040f;
-            for (int p = 0; p < 7; ++p) {
-                const float ang = (PI / 7.0f) + (float)p * 2.0f * PI / 7.0f;
-                petal(c, 0.5f, ang, L4/dstW, L4/dstH, W4/dstW, W4/dstH, false);
-            }
-            polystar(c, 0.5f,
-                     (minSide*0.040f)/dstW, (minSide*0.040f)/dstH,
-                     (minSide*0.026f)/dstW, (minSide*0.026f)/dstH,
-                     10, 0.0f, true);
-            for (int p = 0; p < 12; ++p) {
-                const float ang = (float)p * 2.0f * PI / 12.0f;
-                const float rr = minSide * 0.028f;
-                const float xC = rr * cosf(ang);
-                const float yC = rr * sinf(ang);
-                polystar(c + xC / dstW, 0.5f + yC / dstH,
-                         (minSide*0.006f)/dstW, (minSide*0.006f)/dstH,
-                         (minSide*0.003f)/dstW, (minSide*0.003f)/dstH,
-                         4, 0.0f, false);
-            }
-        };
-        peony(cU_left);
-        peony(cU_right);
-        if (drawChain) {
-            // Chain: layered 5-petal florets with tiny inner 3-petal
-            const float aVtop = (bandPx + minSide * 0.025f) / dstH;
-            const float aVbot = 1.0f - aVtop;
-            const int N = 11;
-            for (int k = 0; k < N; ++k) {
-                const float t = (float)(k + 1) / (float)(N + 1);
-                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
-                const float L = minSide * 0.025f, W = minSide * 0.011f;
-                for (int q = 0; q < 5; ++q) {
-                    const float ang = (float)q * 2.0f * PI / 5.0f;
-                    petal(uPos, aVtop, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                    petal(uPos, aVbot, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
-                }
-                const float Ls = L * 0.55f, Ws = W;
+                const float u = uMin + t * (uMax - uMin);
                 for (int q = 0; q < 3; ++q) {
-                    const float ang = (PI/3.0f) + (float)q * 2.0f * PI / 3.0f;
-                    petal(uPos, aVtop, ang, Ls/dstW, Ls/dstH, Ws/dstW, Ws/dstH, false);
-                    petal(uPos, aVbot, ang, Ls/dstW, Ls/dstH, Ws/dstW, Ws/dstH, false);
+                    const float ang = (float)q * 2.0f * PI / 3.0f - PI*0.5f;
+                    petal(u, aVtop, ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                    petal(u, aVbot, -ang, L/dstW, L/dstH, W/dstW, W/dstH, false);
                 }
+            }
+        } else if (opt == 3) {
+            // 8-pointed star chain
+            const float r = minSide * 0.011f;
+            const int N = 11;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float u = uMin + t * (uMax - uMin);
+                polystar(u, aVtop, r/dstW, r/dstH,
+                         (r*0.45f)/dstW, (r*0.45f)/dstH, 8, 0.0f, false);
+                polystar(u, aVbot, r/dstW, r/dstH,
+                         (r*0.45f)/dstW, (r*0.45f)/dstH, 8, 0.0f, false);
+            }
+        } else if (opt == 4) {
+            // S-scroll filigree petals
+            const float L = minSide * 0.022f, W = L * 0.22f;
+            const int N = 9;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float u = uMin + t * (uMax - uMin);
+                petal(u, aVtop, -PI*0.25f, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                petal(u, aVtop, -PI*0.75f, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                petal(u, aVbot,  PI*0.25f, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                petal(u, aVbot,  PI*0.75f, L/dstW, L/dstH, W/dstW, W/dstH, false);
+            }
+        } else { // opt == 5
+            // Tiny-diamond stipple
+            const float r = minSide * 0.005f;
+            const int N = 21;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float u = uMin + t * (uMax - uMin);
+                polystar(u, aVtop, r/dstW, r/dstH,
+                         (r*0.25f)/dstW, (r*0.25f)/dstH, 4, PI/4.0f, false);
+                polystar(u, aVbot, r/dstW, r/dstH,
+                         (r*0.25f)/dstW, (r*0.25f)/dstH, 4, PI/4.0f, false);
             }
         }
-    } else if (style == 34) {
-        // -------- Style 34: Triple chained loops --------
-        // Three closed oval loops in a row across the title rect — small,
-        // large, small — drawn as thick ribbons. The centred surah-title
-        // glyph sits inside the middle loop. Adjacent loops kiss at a
-        // shared tangent point that's marked with a small 6-point star.
-        auto ovalLoop = [&](float centerU, float halfWPx, float halfHPx, float thicknessPx) {
-            const int SEG = 96;
-            float prevUO = 0, prevVO = 0, prevUI = 0, prevVI = 0;
+    };
+    drawFlourish(flourishOpt);
+
+    // ---- Slot 4: outer-tip terminator on each side loop ----
+    const float farLeftU  = sideCLU - sideHalfPx / dstW;
+    const float farRightU = sideCRU + sideHalfPx / dstW;
+    auto drawTip = [&](float u, bool leftward, int opt) {
+        const float facing = leftward ? PI : 0.0f;
+        const float r = sideHalfPx * 0.55f;
+        if (opt == 0) {
+            const float L = r * 0.85f, W = r * 0.22f;
+            petal(u, 0.5f, facing, L/dstW, L/dstH, W/dstW, W/dstH, false);
+        } else if (opt == 1) {
+            // Cardioid bud pointing outward
+            const float a = r * 0.40f;
+            const float sign = leftward ? -1.0f : 1.0f;
+            const int SEG = 48;
+            float prevU = 0, prevV = 0;
             for (int i = 0; i <= SEG; ++i) {
-                const float t = (float)i * 2.0f * PI / (float)SEG;
-                const float xC = halfWPx * cosf(t);
-                const float yC = halfHPx * sinf(t);
-                const float tx = -halfWPx * sinf(t);
-                const float ty =  halfHPx * cosf(t);
-                const float tlen = std::max(1e-6f, sqrtf(tx*tx + ty*ty));
-                const float perpX = -ty / tlen;
-                const float perpY =  tx / tlen;
-                const float uO = centerU + (xC + perpX * thicknessPx) / dstW;
-                const float vO = 0.5f + (yC + perpY * thicknessPx) / dstH;
-                const float uI = centerU + (xC - perpX * thicknessPx) / dstW;
-                const float vI = 0.5f + (yC - perpY * thicknessPx) / dstH;
-                if (i > 0) {
-                    line(prevUO, prevVO, uO, vO);
-                    line(uI, vI, prevUI, prevVI);
-                }
-                prevUO = uO; prevVO = vO;
-                prevUI = uI; prevVI = vI;
+                const float th = (float)i * 2.0f * PI / (float)SEG;
+                const float rr = a * (1.0f - cosf(th));
+                const float xC = sign * sinf(th) * rr;
+                const float yC = cosf(th) * rr - a;
+                const float uu = u + xC / dstW;
+                const float vv = 0.5f + yC / dstH;
+                if (i > 0) line(prevU, prevV, uu, vv);
+                prevU = uu; prevV = vv;
             }
-        };
-
-        // Middle loop sized so the surah-title plate clears comfortably
-        // inside it. Side loops touch the middle at its tangent points
-        // and span a circular silhouette.
-        const float midHalfWPx  = dstW * 0.28f;
-        const float midHalfHPx  = dstH * 0.40f;
-        const float sideHalfPx  = dstH * 0.30f;   // round-ish side loops
-        const float thicknessPx = minSide * 0.022f;
-
-        ovalLoop(0.50f, midHalfWPx, midHalfHPx, thicknessPx);
-        const float sideOffsetU = (midHalfWPx + sideHalfPx) / dstW;
-        ovalLoop(0.50f - sideOffsetU, sideHalfPx, sideHalfPx, thicknessPx * 0.9f);
-        ovalLoop(0.50f + sideOffsetU, sideHalfPx, sideHalfPx, thicknessPx * 0.9f);
-
-        // 6-point stars at the kiss points between adjacent loops.
-        const float kissLeftU  = 0.50f - midHalfWPx / dstW;
-        const float kissRightU = 0.50f + midHalfWPx / dstW;
-        auto kissStar = [&](float u, float rPx) {
+        } else if (opt == 2) {
             polystar(u, 0.5f,
-                     rPx/dstW, rPx/dstH,
-                     (rPx*0.55f)/dstW, (rPx*0.55f)/dstH,
-                     6, 0.0f, false);
-        };
-        const float rKiss = minSide * 0.024f;
-        kissStar(kissLeftU,  rKiss);
-        kissStar(kissRightU, rKiss);
+                     (r*0.70f)/dstW, (r*0.70f)/dstH,
+                     (r*0.30f)/dstW, (r*0.30f)/dstH,
+                     5, facing, false);
+        } else if (opt == 3) {
+            // Three-petal fan
+            const float L = r * 0.80f, W = r * 0.18f;
+            for (int q = -1; q <= 1; ++q) {
+                const float a2 = facing + (float)q * 0.45f;
+                petal(u, 0.5f, a2, L/dstW, L/dstH, W/dstW, W/dstH, false);
+            }
+        } else { // opt == 4
+            // Spiral curl
+            const float sign = leftward ? -1.0f : 1.0f;
+            const int SEG = 40;
+            float prevU = 0, prevV = 0;
+            for (int i = 0; i <= SEG; ++i) {
+                const float t = (float)i / (float)SEG;
+                const float th = t * 3.0f * PI;
+                const float rr = r * (1.0f - t * 0.8f);
+                const float xC = sign * cosf(th) * rr;
+                const float yC = sinf(th) * rr;
+                const float uu = u + xC / dstW;
+                const float vv = 0.5f + yC / dstH;
+                if (i > 0) line(prevU, prevV, uu, vv);
+                prevU = uu; prevV = vv;
+            }
+        }
+    };
+    drawTip(farLeftU, true, tipOpt);
+    drawTip(farRightU, false, tipOpt);
 
-        // Tiny petal accents at the far outer tips of the side loops, to
-        // bracket the whole chain.
-        const float farLeftU  = kissLeftU  - 2.0f * sideHalfPx / dstW;
-        const float farRightU = kissRightU + 2.0f * sideHalfPx / dstW;
-        const float Lt = minSide * 0.040f, Wt = minSide * 0.012f;
-        petal(farLeftU,  0.5f, PI,    Lt/dstW, Lt/dstH, Wt/dstW, Wt/dstH, false);
-        petal(farRightU, 0.5f, 0.0f, Lt/dstW, Lt/dstH, Wt/dstW, Wt/dstH, false);
-    }
+    // ---- Slot 5: band-edge micro-stipple ----
+    auto drawBand = [&](int opt) {
+        if (opt == 0) return;
+        const float aVtop = (bandPx + minSide * 0.004f) / dstH;
+        const float aVbot = 1.0f - aVtop;
+        const float uMin = (bandPx + minSide * 0.008f) / dstW;
+        const float uMax = 1.0f - uMin;
+        if (opt == 1) {
+            // Tiny dotted line
+            const float r = minSide * 0.0035f;
+            const int N = 31;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float u = uMin + t * (uMax - uMin);
+                polystar(u, aVtop, r/dstW, r/dstH,
+                         (r*0.45f)/dstW, (r*0.45f)/dstH, 8, 0.0f, false);
+                polystar(u, aVbot, r/dstW, r/dstH,
+                         (r*0.45f)/dstW, (r*0.45f)/dstH, 8, 0.0f, false);
+            }
+        } else if (opt == 2) {
+            // Alternating 6-star / 4-diamond
+            const float r = minSide * 0.006f;
+            const int N = 21;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float u = uMin + t * (uMax - uMin);
+                if (k & 1) {
+                    polystar(u, aVtop, r/dstW, r/dstH,
+                             (r*0.35f)/dstW, (r*0.35f)/dstH, 6, 0.0f, false);
+                    polystar(u, aVbot, r/dstW, r/dstH,
+                             (r*0.35f)/dstW, (r*0.35f)/dstH, 6, 0.0f, false);
+                } else {
+                    polystar(u, aVtop, (r*0.55f)/dstW, (r*0.55f)/dstH,
+                             (r*0.25f)/dstW, (r*0.25f)/dstH, 4, PI/4.0f, false);
+                    polystar(u, aVbot, (r*0.55f)/dstW, (r*0.55f)/dstH,
+                             (r*0.25f)/dstW, (r*0.25f)/dstH, 4, PI/4.0f, false);
+                }
+            }
+        } else { // opt == 3
+            // Tiny upright petals
+            const float L = minSide * 0.010f, W = L * 0.35f;
+            const int N = 17;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float u = uMin + t * (uMax - uMin);
+                petal(u, aVtop,  PI*0.5f, L/dstW, L/dstH, W/dstW, W/dstH, false);
+                petal(u, aVbot, -PI*0.5f, L/dstW, L/dstH, W/dstW, W/dstH, false);
+            }
+        }
+    };
+    drawBand(bandOpt);
 
     const int curveCount = totalCurves - curveStart;
 
