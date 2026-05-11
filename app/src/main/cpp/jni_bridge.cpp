@@ -276,7 +276,7 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
     // share the triple band above and emit two end medallions plus a
     // chain along the long edges, but the motifs differ — stars,
     // petals, sunburst rays, or interlaced girih shapes.
-    const int NUM_STYLES = 19;
+    const int NUM_STYLES = 22;
     const int style = ((unsigned)seed) % (unsigned)NUM_STYLES;
     LOGI("emitFrame: seed=%d style=%d", seed, style);
 
@@ -1448,6 +1448,164 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
                 const float ang = (float)k * PI / 4.0f;
                 crescent(uPos, aVtop, ang, 0.50f);
                 crescent(uPos, aVbot, -ang, 0.50f);
+            }
+        }
+    } else if (style == 19) {
+        // -------- Style 19: Hexagonal tessellation field --------
+        // No end medallions. Instead, fill the interior with a regular
+        // tessellation of small hex stars. Different layout regime → very
+        // distinctive look.
+        const float cellPx = minSide * 0.085f;
+        const float cellU = cellPx / dstW;
+        const float cellV = cellPx / dstH;
+        const float interiorU0 = bandPx / dstW + cellU;
+        const float interiorU1 = 1.0f - interiorU0;
+        const float interiorV0 = bandPx / dstH + cellV;
+        const float interiorV1 = 1.0f - interiorV0;
+        const float rowStep = cellV * 1.55f;
+        const float colStep = cellU * 1.80f;
+        int row = 0;
+        for (float v = interiorV0; v <= interiorV1; v += rowStep) {
+            const float xOff = ((row & 1) == 0) ? 0.0f : colStep * 0.5f;
+            for (float u = interiorU0 + xOff; u <= interiorU1; u += colStep) {
+                polystar(u, v,
+                         (cellPx * 0.45f) / dstW, (cellPx * 0.45f) / dstH,
+                         (cellPx * 0.22f) / dstW, (cellPx * 0.22f) / dstH,
+                         6, (row & 1 ? PI/6.0f : 0.0f), false);
+                polystar(u, v,
+                         (cellPx * 0.18f) / dstW, (cellPx * 0.18f) / dstH,
+                         (cellPx * 0.09f) / dstW, (cellPx * 0.09f) / dstH,
+                         6, (row & 1 ? 0.0f : PI/6.0f), true);
+            }
+            ++row;
+        }
+    } else if (style == 20) {
+        // -------- Style 20: Corner cartouches --------
+        // No end medallions. Instead, four ornate triangular corner
+        // cartouches with arcing inner edge — like the corners of an
+        // illuminated manuscript page.
+        const float cornerU = (bandPx + minSide * 0.015f) / dstW;
+        const float cornerV = (bandPx + minSide * 0.015f) / dstH;
+        const float cornerSize = minSide * 0.34f;
+        auto cornerPiece = [&](float anchorU, float anchorV, float dirU, float dirV) {
+            // Triangular corner from anchor extending inward by (dirU, dirV)
+            const float farU = anchorU + dirU * cornerSize / dstW;
+            const float farV = anchorV + dirV * cornerSize / dstH;
+            // Filled fan with 5 petals radiating inward
+            for (int p = 0; p < 5; ++p) {
+                const float t = (float)p / 4.0f;  // 0..1
+                const float ang = atan2f(dirV, dirU) + (t - 0.5f) * (PI * 0.6f);
+                petal(anchorU, anchorV, ang,
+                      (cornerSize * 0.80f) / dstW, (cornerSize * 0.80f) / dstH,
+                      (minSide * 0.025f) / dstW, (minSide * 0.025f) / dstH, false);
+            }
+            // Rosette boss near the far point
+            polystar(farU * 0.4f + anchorU * 0.6f, farV * 0.4f + anchorV * 0.6f,
+                     (minSide * 0.040f) / dstW, (minSide * 0.040f) / dstH,
+                     (minSide * 0.024f) / dstW, (minSide * 0.024f) / dstH,
+                     8, 0.0f, false);
+            polystar(farU * 0.4f + anchorU * 0.6f, farV * 0.4f + anchorV * 0.6f,
+                     (minSide * 0.022f) / dstW, (minSide * 0.022f) / dstH,
+                     (minSide * 0.012f) / dstW, (minSide * 0.012f) / dstH,
+                     6, PI/6.0f, true);
+        };
+        cornerPiece(cornerU,        cornerV,         +1.0f, +1.0f);
+        cornerPiece(1.0f-cornerU,   cornerV,         -1.0f, +1.0f);
+        cornerPiece(cornerU,        1.0f-cornerV,    +1.0f, -1.0f);
+        cornerPiece(1.0f-cornerU,   1.0f-cornerV,    -1.0f, -1.0f);
+        // Central decoration: a horizontal flowing chain of small
+        // ornaments spanning across the band.
+        const float aV = 0.5f;
+        const int N = 7;
+        for (int k = 0; k < N; ++k) {
+            const float t = (float)(k + 1) / (float)(N + 1);
+            const float uPos = 0.35f + t * 0.30f;
+            if ((k & 1) == 0) {
+                polystar(uPos, aV,
+                         (minSide * 0.022f) / dstW, (minSide * 0.022f) / dstH,
+                         (minSide * 0.011f) / dstW, (minSide * 0.011f) / dstH,
+                         8, 0.0f, false);
+            } else {
+                petal(uPos, aV, 0.0f,
+                      (minSide * 0.030f) / dstW, (minSide * 0.030f) / dstH,
+                      (minSide * 0.008f) / dstW, (minSide * 0.008f) / dstH, false);
+                petal(uPos, aV, PI,
+                      (minSide * 0.030f) / dstW, (minSide * 0.030f) / dstH,
+                      (minSide * 0.008f) / dstW, (minSide * 0.008f) / dstH, false);
+            }
+        }
+    } else if (style == 21) {
+        // -------- Style 21: Bold calligraphic flourish --------
+        // A single dramatic asymmetric swirl per medallion: thick
+        // S-curve with a bulb at one end, like a Tughra calligraphic
+        // mark or a stylized leaf. Much bolder than the symmetric
+        // mandalas.
+        auto flourish = [&](float c, bool mirror) {
+            const float sgn = mirror ? -1.0f : 1.0f;
+            const float SCALE = minSide * 0.36f;
+            // Thick S-curve: two arcs concatenated with offset.
+            // Approximated as polyline.
+            const int SEG = 24;
+            float prevUO = 0.0f, prevVO = 0.0f, prevUI = 0.0f, prevVI = 0.0f;
+            for (int i = 0; i <= SEG; ++i) {
+                const float t = (float)i / (float)SEG;
+                // S-curve parameter: x = sgn*SCALE*(t*2-1), y = SCALE*sin(t*2*PI)*0.6
+                const float xC = sgn * SCALE * (t * 2.0f - 1.0f);
+                const float yC = SCALE * sinf(t * 2.0f * PI) * 0.45f;
+                // Tangent direction
+                const float dx = sgn * SCALE * 2.0f;
+                const float dy = SCALE * cosf(t * 2.0f * PI) * 2.0f * PI * 0.45f;
+                const float dlen = sqrtf(dx*dx + dy*dy);
+                const float perpX = -dy / dlen;
+                const float perpY =  dx / dlen;
+                const float thickness = minSide * 0.045f * (1.0f - 0.5f * fabsf(t * 2.0f - 1.0f));
+                const float uO = c + (xC + perpX * thickness) / dstW;
+                const float vO = 0.5f + (yC + perpY * thickness) / dstH;
+                const float uI = c + (xC - perpX * thickness) / dstW;
+                const float vI = 0.5f + (yC - perpY * thickness) / dstH;
+                if (i > 0) {
+                    line(prevUO, prevVO, uO, vO);
+                    line(uI, vI, prevUI, prevVI);
+                }
+                prevUO = uO; prevVO = vO;
+                prevUI = uI; prevVI = vI;
+            }
+            // Bulb at start
+            polystar(c + sgn * (-SCALE) / dstW, 0.5f,
+                     (minSide * 0.055f) / dstW, (minSide * 0.055f) / dstH,
+                     (minSide * 0.040f) / dstW, (minSide * 0.040f) / dstH,
+                     12, 0.0f, false);
+            // Pointed tip at end (petal pointing outward)
+            petal(c + sgn * (SCALE * 0.9f) / dstW, 0.5f,
+                  sgn > 0 ? 0.3f : PI - 0.3f,
+                  (minSide * 0.075f) / dstW, (minSide * 0.075f) / dstH,
+                  (minSide * 0.015f) / dstW, (minSide * 0.015f) / dstH, false);
+            // Accent dots above and below the centre
+            polystar(c, 0.5f - (minSide * 0.12f) / dstH,
+                     (minSide * 0.020f) / dstW, (minSide * 0.020f) / dstH,
+                     (minSide * 0.010f) / dstW, (minSide * 0.010f) / dstH,
+                     6, 0.0f, false);
+            polystar(c, 0.5f + (minSide * 0.12f) / dstH,
+                     (minSide * 0.020f) / dstW, (minSide * 0.020f) / dstH,
+                     (minSide * 0.010f) / dstW, (minSide * 0.010f) / dstH,
+                     6, 0.0f, false);
+        };
+        flourish(cU_left, false);
+        flourish(cU_right, true);
+        if (drawChain) {
+            // Tiny mirror flourishes along the band
+            const float aVtop = (bandPx + minSide * 0.035f + minSide * 0.012f) / dstH;
+            const float aVbot = 1.0f - aVtop;
+            const int N = 11;
+            for (int k = 0; k < N; ++k) {
+                const float t = (float)(k + 1) / (float)(N + 1);
+                const float uPos = chainMarginU + t * (1.0f - 2.0f * chainMarginU);
+                petal(uPos, aVtop, (k & 1 ? PI*0.25f : PI*0.75f),
+                      (minSide*0.030f)/dstW, (minSide*0.030f)/dstH,
+                      (minSide*0.007f)/dstW, (minSide*0.007f)/dstH, false);
+                petal(uPos, aVbot, (k & 1 ? -PI*0.25f : -PI*0.75f),
+                      (minSide*0.030f)/dstW, (minSide*0.030f)/dstH,
+                      (minSide*0.007f)/dstW, (minSide*0.007f)/dstH, false);
             }
         }
     }
