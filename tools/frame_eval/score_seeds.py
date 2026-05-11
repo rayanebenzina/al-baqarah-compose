@@ -88,8 +88,13 @@ def score(candidate: np.ndarray, target: np.ndarray) -> dict:
         cd = candidate[r0:r1, c0:c1].mean()
         td = target[r0:r1, c0:c1].mean()
         regions[name] = (cd, td, abs(cd - td))
+    # Left/right mirror symmetry: fraction of cells that agree when
+    # the grid is flipped horizontally. The reference is symmetric
+    # by design; a candidate < 0.98 here flags a generator bug.
+    sym = (candidate == np.fliplr(candidate)).mean()
     return {"jaccard": jacc, "matchPct": match, "regions": regions,
-            "candInk": int(candidate.sum()), "targetInk": int(target.sum())}
+            "candInk": int(candidate.sum()), "targetInk": int(target.sum()),
+            "sym": float(sym)}
 
 
 def main():
@@ -126,14 +131,14 @@ def main():
           f"{len(results) - valid} disqualified by titleHits>0). "
           f"Target ink: {targetInk}/{W*H}")
     print()
-    print(f"{'rank':>4}  {'seed':>6}  side kiss flou tip band corn  curves  jacc  match  ink  titleHits")
+    print(f"{'rank':>4}  {'seed':>6}  side kiss flou tip band corn  curves  jacc  match   sym   ink  titleHits")
     for i, (h, g, s) in enumerate(results[:args.top], 1):
         sl = h["slots"]
         flag = " *DQ" if h["titleHits"] > 0 else ""
         print(f"{i:>4}  {h['seed']:>6}  {sl[0]:>4} {sl[1]:>4} {sl[2]:>4} "
               f"{sl[3]:>3} {sl[4]:>4} {sl[5]:>4}  {h['curves']:>6}  "
               f"{s['jaccard']:.3f}  {s['matchPct']:.3f}  "
-              f"{s['candInk']:>4}  {h['titleHits']:>4}{flag}")
+              f"{s['sym']:.3f}  {s['candInk']:>4}  {h['titleHits']:>4}{flag}")
 
     print()
     print("Region density (cand vs target, abs diff):")

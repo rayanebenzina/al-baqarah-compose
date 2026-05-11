@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <string>
 #include <vector>
 
 #include "colr_parser.h"

@@ -13,28 +13,32 @@ static bool isFrameAsciiDebugEnabled() {
     return n > 0 && buf[0] == '1';
 }
 
-// ASCII rasterizer for the curves just emitted by emitFrame. Computes
-// the actual filled region (non-zero winding rule) per 96×18 cell —
-// matching what Vulkan ultimately rasterises — and dumps the grid to
-// logcat alongside an ink-cell count, bounding box, and a count of
-// cells that fall inside the title-glyph ellipse (= readability
-// violations, marked 'X'). Gated by the `debug.baqarah.frame` Android
-// system property so it costs nothing in normal runs:
-//   adb shell setprop debug.baqarah.frame 1
-//   adb logcat -s BaqarahVkJNI:I
-//
-// Cost per call: 96 * 18 = 1728 cells x ~1000 curves x O(1) ray-cast =
-// ~1.7M ops. Comfortably runs in single-digit ms.
-static void logFrameAsciiPreview(const std::vector<float>& allCurves,
-                                  int curveStart, int curveCount,
-                                  int seed,
-                                  int sideOpt, int kissOpt, int flourishOpt,
-                                  int tipOpt, int bandOpt, int cornerOpt) {
-    if (!isFrameAsciiDebugEnabled()) return;
+struct FrameGridStats {
+    int inkCells = 0;
+    int interiorHits = 0;
+    float uMin = 0.0f, uMax = 0.0f, vMin = 0.0f, vMax = 0.0f;
+};
 
-    constexpr int W = 96;
-    constexpr int H = 18;
-    char grid[H][W + 1];
+// Rasterise the emitted curves into a W×H ASCII grid using the
+// non-zero winding rule — same fill rule Vulkan uses on-device, so
+// `filled` cells here predict the rendered output.
+//
+// Each row is filled with cells of the alphabet { ' ', '#', 'X' }:
+//   ' ' — winding zero (empty)
+//   '#' — non-zero winding, outside the title-glyph ellipse
+//   'X' — non-zero winding *inside* the title margin (invariant
+//         violation: the title would be obscured)
+//
+// Cost: W·H cells × curveCount curves × O(1) ray-cast each. At the
+// default 96×18 grid with ~1000 curves this is ~1.7M ops — single-
+// digit ms. Higher resolutions scale linearly.
+static void rasterizeFrameGrid(const std::vector<float>& allCurves,
+                               int curveStart, int curveCount,
+                               int W, int H,
+                               std::vector<std::string>& gridOut,
+                               FrameGridStats& stats) {
+    gridOut.assign((size_t)H, std::string());
+    stats = FrameGridStats{};
 
     constexpr float interiorMargin = 0.85f;
     constexpr float midHalfWUV = 0.28f, midHalfHUV = 0.40f;
@@ -104,6 +108,8 @@ static void logFrameAsciiPreview(const std::vector<float>& allCurves,
     // a shape's horizontal axis (e.g., the middle ellipse's v=0.5).
     constexpr float V_JITTER = 0.000173f;
     for (int r = 0; r < H; ++r) {
+        std::string& row = gridOut[r];
+        row.assign((size_t)W, ' ');
         const float v = (r + 0.5f) / (float)H + V_JITTER;
         for (int c = 0; c < W; ++c) {
             const float u = (c + 0.5f) / (float)W;
@@ -113,25 +119,46 @@ static void logFrameAsciiPreview(const std::vector<float>& allCurves,
                 uMin = std::min(uMin, u); uMax = std::max(uMax, u);
                 vMin = std::min(vMin, v); vMax = std::max(vMax, v);
                 if (insideTitle(u, v)) {
-                    grid[r][c] = 'X';
+                    row[c] = 'X';
                     ++interiorHits;
                 } else {
-                    grid[r][c] = '#';
+                    row[c] = '#';
                 }
-            } else {
-                grid[r][c] = ' ';
             }
         }
-        grid[r][W] = '\0';
     }
     if (inkCells == 0) { uMin = vMin = 0.0f; uMax = vMax = 0.0f; }
+    stats.inkCells = inkCells;
+    stats.interiorHits = interiorHits;
+    stats.uMin = uMin; stats.uMax = uMax;
+    stats.vMin = vMin; stats.vMax = vMax;
+}
+
+// Thin wrapper: rasterise at the standard 96×18 resolution and dump
+// to logcat. Gated by the `debug.baqarah.frame` Android system
+// property so it costs nothing in normal runs:
+//   adb shell setprop debug.baqarah.frame 1
+//   adb logcat -s BaqarahVkJNI:I
+static void logFrameAsciiPreview(const std::vector<float>& allCurves,
+                                  int curveStart, int curveCount,
+                                  int seed,
+                                  int sideOpt, int kissOpt, int flourishOpt,
+                                  int tipOpt, int bandOpt, int cornerOpt) {
+    if (!isFrameAsciiDebugEnabled()) return;
+
+    constexpr int W = 96;
+    constexpr int H = 18;
+    std::vector<std::string> grid;
+    FrameGridStats stats;
+    rasterizeFrameGrid(allCurves, curveStart, curveCount, W, H, grid, stats);
 
     LOGI("frame-ascii seed=%d slots=(side=%d kiss=%d flour=%d tip=%d band=%d corner=%d) "
          "curves=%d ink=%d bbox=(%.2f,%.2f)-(%.2f,%.2f) titleInteriorHits=%d",
          seed, sideOpt, kissOpt, flourishOpt, tipOpt, bandOpt, cornerOpt, curveCount,
-         inkCells, uMin, vMin, uMax, vMax, interiorHits);
-    for (int r = 0; r < H; ++r) {
-        LOGI("frame-ascii |%s|", grid[r]);
+         stats.inkCells, stats.uMin, stats.vMin, stats.uMax, stats.vMax,
+         stats.interiorHits);
+    for (const std::string& row : grid) {
+        LOGI("frame-ascii |%s|", row.c_str());
     }
 }
 
@@ -279,15 +306,15 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
     // The triple chained-loop is the always-on structural backbone of
     // the frame; the seed factorises into six independent ornament
     // slots so every value produces a unique mix of motifs drawn from
-    // the earlier hand-tuned styles. Total combinations = 6·5·6·5·4·5.
-    const int NUM_STYLES = 18000;
+    // the earlier hand-tuned styles. Total combinations = 6·5·6·5·4·6.
+    const int NUM_STYLES = 21600;
     unsigned int seedU = (unsigned)seed;
     const int sideInteriorOpt = (int)(seedU % 6u); seedU /= 6u;
     const int kissOpt         = (int)(seedU % 5u); seedU /= 5u;
     const int flourishOpt     = (int)(seedU % 6u); seedU /= 6u;
     const int tipOpt          = (int)(seedU % 5u); seedU /= 5u;
     const int bandOpt         = (int)(seedU % 4u); seedU /= 4u;
-    const int cornerFillOpt   = (int)(seedU % 5u);
+    const int cornerFillOpt   = (int)(seedU % 6u);
     (void)NUM_STYLES;
     LOGI("emitFrame: seed=%d (mix: side=%d kiss=%d flourish=%d tip=%d band=%d corner=%d)",
          seed, sideInteriorOpt, kissOpt, flourishOpt, tipOpt, bandOpt, cornerFillOpt);
@@ -296,7 +323,12 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
     // Middle oval wide enough to clear the centred surah-title plate;
     // two circular side loops kiss it tangentially at u = 0.5 ±
     // midHalfWU. Adjacent loop pairs share a 6-point kiss star.
-    const float midHalfWPx  = dstW * 0.28f;
+    // Cartouche half-width and side-medallion radius derived to put
+    // medallion centres at u≈0.20/0.80 (matching the reference), with
+    // the cartouche occupying the remaining horizontal space. The
+    // medallion outer circle's vertical extent (0.30·dstH) is the
+    // limiting dimension for ring thickness at 96×18.
+    const float midHalfWPx  = dstW * 0.24f;
     const float sideHalfPx  = dstH * 0.30f;
     const float thicknessPx = minSide * 0.022f;
 
@@ -422,6 +454,33 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
         }
     };
 
+    // negSpace — emits a CW-traced N-pointed star outline. Under the
+    // non-zero winding rule each negSpace shape contributes −1 to the
+    // winding number of points inside it. Dropped onto a filled
+    // background (e.g. a corner-fill rect at +1) it carves a clean
+    // 0-winding void, producing the "lattice" / "lacy filigree" look
+    // the reference relies on for visual interest inside its dense
+    // side regions.
+    auto negSpace = [&](float cU, float cV, float rUout, float rVout,
+                        int points, float phase) {
+        const int N = points * 2;
+        const float angStep = -PI / (float)points;  // CW
+        const float ruIn = rUout * 0.45f;
+        const float rvIn = rVout * 0.45f;
+        float prevX = cU + rUout * cosf(phase);
+        float prevY = cV + rVout * sinf(phase);
+        for (int i = 1; i <= N; ++i) {
+            const float ang = phase + (float)i * angStep;
+            const bool isOut = (i & 1) == 0;
+            const float ru = isOut ? rUout : ruIn;
+            const float rv = isOut ? rVout : rvIn;
+            const float x = cU + cosf(ang) * ru;
+            const float y = cV + sinf(ang) * rv;
+            line(prevX, prevY, x, y);
+            prevX = x; prevY = y;
+        }
+    };
+
     // ---- Triple-loop backbone ----
     // Replaced: middle ribbon → rounded-rectangle cartouche bounding
     // the title cavity; side ribbons → filled circular medallions.
@@ -442,10 +501,13 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
 
     // Rounded-rectangle cartouche around the title cavity. Its top
     // and bottom edges deliberately CROSS the inner band, producing
-    // the structural "notches" visible in the reference.
+    // the structural "notches" visible in the reference. Stroke is
+    // kept thin — at 96×18 it sits behind the band fill but on the
+    // higher-resolution Vulkan rasterisation it reads as a clean
+    // rounded outline.
     const float cartU0 = 0.50f - midHalfWPx / dstW;
     const float cartU1 = 0.50f + midHalfWPx / dstW;
-    const float cartV0 = (bandPx * 0.3f) / dstH;             // poke into band
+    const float cartV0 = (bandPx * 0.3f) / dstH;
     const float cartV1 = 1.0f - cartV0;
     const float cartCornerR = std::min(midHalfWPx * 0.10f / dstW,
                                        (cartV1 - cartV0) * 0.20f);
@@ -819,15 +881,45 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
                         petal(u, v, ang + PI,    pL, pL, pW, pW, false);
                     }
                 }
-            } else { // o == 4
+            } else if (o == 4) {
                 // Saturated filled block: a CCW outer rectangle fills
                 // the entire region with winding +1, then a CW
                 // medallion circle (drawn at the end of this lambda)
-                // carves the cutout. Highest possible coverage.
+                // carves the cutout. Highest possible uniform coverage.
                 line(u0, v0, u1, v0);
                 line(u1, v0, u1, v1);
                 line(u1, v1, u0, v1);
                 line(u0, v1, u0, v0);
+            } else { // o == 5
+                // Perforated lattice: saturated CCW rect (+1) with a
+                // grid of small CW negSpace shapes carved through it.
+                // Approximates the reference's "lacy" side regions
+                // where dense filigree alternates with empty pockets.
+                line(u0, v0, u1, v0);
+                line(u1, v0, u1, v1);
+                line(u1, v1, u0, v1);
+                line(u0, v1, u0, v0);
+                // 4×3 grid of CW lozenges (4 points, 45° phase) sized
+                // to roughly 60% of a cell, packed inside the block
+                // and skipping any cell that would overlap the
+                // medallion cutout.
+                const int NU = 4, NV = 3;
+                const float cellU = spanU / (float)NU;
+                const float cellV = spanV / (float)NV;
+                const float vRadU = cellU * 0.30f;
+                const float vRadV = cellV * 0.30f;
+                const float medClipU = sideHalfPx / dstW + cellU * 0.5f;
+                const float medClipV = sideHalfPx / dstH + cellV * 0.5f;
+                for (int rr = 0; rr < NV; ++rr) {
+                    for (int cc = 0; cc < NU; ++cc) {
+                        const float u = u0 + cellU * ((float)cc + 0.5f);
+                        const float v = v0 + cellV * ((float)rr + 0.5f);
+                        const float du = (u - medU) / medClipU;
+                        const float dv = (v - 0.5f) / medClipV;
+                        if (du * du + dv * dv < 1.0f) continue;  // medallion
+                        negSpace(u, v, vRadU, vRadV, 4, PI * 0.25f);
+                    }
+                }
             }
             // Carve the medallion cutout: a CW-traced circle around
             // the side-loop centre. Radius matches the medallion's
@@ -845,6 +937,16 @@ void emitFrame(float dstX, float dstY, float dstW, float dstH,
                 line(prevU, prevV, uu, vv);
                 prevU = uu; prevV = vv;
             }
+            // Rosette inside the medallion. Drawn AFTER the cutout
+            // so its +1 winding shows through cleanly. Sized to fit
+            // inside the medallion's inner ring (radius
+            // sideHalfPx · 0.65 in both axes). Matches the reference
+            // medallions which have a small flower in their centre.
+            const float rosR_u = sideHalfPx * 0.45f / dstW;
+            const float rosR_v = sideHalfPx * 0.45f / dstH;
+            polystar(medU, 0.5f, rosR_u, rosR_v,
+                     rosR_u * 0.45f, rosR_v * 0.45f,
+                     6, 0.0f, false);
         };
         fillBlock(uMinL, uMaxL, vMin, vMax, sideCLU, opt);
         fillBlock(uMinR, uMaxR, vMin, vMax, sideCRU, opt);

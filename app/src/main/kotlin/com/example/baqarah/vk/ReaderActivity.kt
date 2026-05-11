@@ -273,6 +273,6 @@ class ReaderActivity : Activity() {
         private const val BG_TOPBAR = 0xFFE9DCBE.toInt()       // slightly darker cream
         private const val INK_DARK = 0xFF281E14.toInt()        // matches glyph fallback
         // Keep in sync with NUM_STYLES in jni_bridge.cpp emitFrame switch.
-        private const val FRAME_STYLE_COUNT = 18000
+        private const val FRAME_STYLE_COUNT = 21600
     }
 }
